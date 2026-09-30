@@ -1,0 +1,14 @@
+[Unit]
+Description=Live Idol Timetable static site on port 9999
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/live-idol-timetable.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/live-idol-timetable.conf -g "daemon off;"
+ExecReload=/usr/sbin/nginx -s reload -c /etc/nginx/live-idol-timetable.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

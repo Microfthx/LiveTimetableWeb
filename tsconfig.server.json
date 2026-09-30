@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "noEmitOnError": true
+  },
+  "include": [
+    "server/**/*.ts",
+    "src/data/demo.ts",
+    "src/types/timetable.ts",
+    "src/utils/time.ts",
+    "src/utils/validation.ts"
+  ],
+  "exclude": ["server/**/*.test.ts"]
+}

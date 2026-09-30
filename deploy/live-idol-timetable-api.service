@@ -1,0 +1,20 @@
+[Unit]
+Description=Live Idol Timetable shared data API
+After=network.target
+
+[Service]
+Type=simple
+User=nginx
+Group=nginx
+WorkingDirectory=/opt/live-idol-timetable/api-current
+Environment=HOST=127.0.0.1
+Environment=PORT=10001
+Environment=DATA_DIR=/var/lib/live-idol-timetable
+EnvironmentFile=/etc/live-idol-timetable-api.env
+StateDirectory=live-idol-timetable
+ExecStart=/usr/bin/node /opt/live-idol-timetable/api-current/server/main.js
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
