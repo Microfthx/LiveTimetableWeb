@@ -21,6 +21,7 @@ import {
   type RuntimeGroupImages,
 } from "../utils/poster";
 import { GroupImage, RuntimeImageContext } from "./GroupImage";
+import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSection";
 
 export function Sheet({
   title,
@@ -178,6 +179,11 @@ export function ImportBottomSheet({
   duplicateTitles = [],
   originalPosterRatio,
   replacementPending = false,
+  smartEnabled = false,
+  displayPoster = null,
+  showDisplayPosterEditor = false,
+  coverReplacementPending = false,
+  onDisplayPosterSelect,
   onPosterSelect,
   onPosterClear,
   onDirtyChange,
@@ -193,6 +199,11 @@ export function ImportBottomSheet({
   duplicateTitles?: string[];
   originalPosterRatio?: number;
   replacementPending?: boolean;
+  smartEnabled?: boolean;
+  displayPoster?: PosterSource | null;
+  showDisplayPosterEditor?: boolean;
+  coverReplacementPending?: boolean;
+  onDisplayPosterSelect?: (poster: PosterSource | null) => void;
   onPosterSelect: (poster: PosterSource) => void;
   onPosterClear: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -200,6 +211,9 @@ export function ImportBottomSheet({
   onClose: () => void;
 }) {
   const [text, setText] = useState(() => initialData ? JSON.stringify(initialData, null, 2) : "");
+  const [importMode, setImportMode] = useState<"smart" | "manual">(smartEnabled ? "smart" : "manual");
+  const [manualRequest, setManualRequest] = useState(0);
+  const [sourceSummary, setSourceSummary] = useState<SmartSourceSummary | null>(null);
   const [city, setCity] = useState(initialCity);
   const [candidate, setCandidate] = useState<{
     data: EventData;
@@ -215,6 +229,7 @@ export function ImportBottomSheet({
   const [toast, setToast] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const posterRef = useRef<HTMLInputElement>(null);
+  const displayPosterFileRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef<RuntimeGroupImages>({});
   const confirmingRef = useRef(false);
 
@@ -276,6 +291,25 @@ export function ImportBottomSheet({
       setProcessing(false);
       setError(cause instanceof Error ? cause.message : "JSON 解析失败。");
     }
+  };
+  const prepareSmart = (data: EventData, crop: PosterSource | null, cover: PosterSource | null, summary: SmartSourceSummary) => {
+    setText(JSON.stringify(data, null, 2));
+    setCandidate(parseEventJsonDetailed(JSON.stringify(data)));
+    setSourceSummary(summary);
+    setPreview({ images: {}, failed: [] });
+    setProcessing(!!crop);
+    if (crop) onPosterSelect(crop);
+    else onPosterClear();
+    onDisplayPosterSelect?.(cover);
+    onDirtyChange?.(true);
+    setError("");
+  };
+  const useSmartSourcesManually = (crop: PosterSource | null, cover: PosterSource | null, summary: SmartSourceSummary) => {
+    if (crop) onPosterSelect(crop);
+    else onPosterClear();
+    onDisplayPosterSelect?.(cover);
+    setSourceSummary(summary);
+    setImportMode("manual");
   };
   const loadFile = async (file?: File) => {
     if (!file) return;
@@ -367,6 +401,10 @@ export function ImportBottomSheet({
       <label className="input-label" htmlFor="activity-city">活动城市 *</label>
       <input id="activity-city" className="activity-city-input" value={city} maxLength={80}
         onChange={(event) => { setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
+      {showDisplayPosterEditor && <div className="cover-editor"><strong>活动列表封面</strong>{displayPoster && <img src={displayPoster.url} alt="当前活动列表封面" />}<button className="secondary-button" disabled={processing} onClick={() => displayPosterFileRef.current?.click()}>更换活动封面</button>{coverReplacementPending && <p className="form-warning">新活动封面尚未保存。</p>}<input ref={displayPosterFileRef} type="file" className="visually-hidden" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPoster(file).then((source) => { onDisplayPosterSelect?.(source); onDirtyChange?.(true); setError(""); }).catch((cause) => setError(cause instanceof Error ? cause.message : "封面读取失败。")); event.target.value = ""; }} /></div>}
+      {smartEnabled && <div className="smart-mode-tabs import-mode-tabs"><button className={importMode === "smart" ? "selected" : ""} onClick={() => setImportMode("smart")}>智能导入</button><button className={importMode === "manual" ? "selected" : ""} onClick={() => { if (importMode === "smart") setManualRequest((value) => value + 1); }}>手动 JSON</button></div>}
+      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
+      <div hidden={importMode !== "manual"}>
       <section className="ocr-workflow" aria-label="AI 海报识别">
         <h3>AI 海报识别</h3>
         <p className="sheet-description">
@@ -511,6 +549,7 @@ export function ImportBottomSheet({
           onDirtyChange?.(true);
         } catch (cause) { setProcessing(false); setError(cause instanceof Error ? cause.message : "JSON 格式错误。"); }
       }}>格式化 JSON</button>
+      </div>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -523,6 +562,7 @@ export function ImportBottomSheet({
       )}
       {data && !processing && (
         <section className="import-preview" aria-label="导入预览">
+          {sourceSummary && <div className="smart-preview-sources"><strong>素材来源：{sourceSummary.origin} · AI {sourceSummary.mode}</strong><span>时间表：{sourceSummary.timetable.startsWith("/") || sourceSummary.timetable.startsWith("blob:") ? "已选图片" : sourceSummary.timetable}</span><span>团体裁剪：{sourceSummary.crop === "无图片" ? "无图片" : "已选图片"}</span><span>活动封面：{sourceSummary.cover === "无图片" ? "占位图" : "已选图片"}</span><div>{([sourceSummary.timetable, sourceSummary.crop, sourceSummary.cover] as const).map((url, index) => url.startsWith("/") || url.startsWith("blob:") ? <img key={`${index}-${url}`} src={url} alt={["时间表来源", "团体裁剪来源", "活动封面"][index]} loading="lazy" /> : null)}</div></div>}
           {duplicateTitles.includes(`${data.event.date}:${data.event.title}`) && !initialData && (
             <p className="form-warning">可能已经存在相同活动。请核对后再创建。</p>
           )}

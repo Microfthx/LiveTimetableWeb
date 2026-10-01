@@ -3,17 +3,21 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { imageSize } from "image-size";
 import type { ActivityRecord } from "../src/types/activity.js";
 import { validateEventData } from "../src/utils/validation.js";
+import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
+import { createWeiboStore, WeiboError } from "./weibo.js";
 
-const MAX_BODY_BYTES = 45 * 1024 * 1024;
+const MAX_BODY_BYTES = 80 * 1024 * 1024;
 const MAX_POSTER_BYTES = 25 * 1024 * 1024;
 const SESSION_SECONDS = 180 * 24 * 60 * 60;
 const IMAGE_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" } as const;
 const ID_PATTERN = "[a-f0-9-]{36}";
 
-interface StoredActivity extends Omit<ActivityRecord, "posterUrl"> {
+interface StoredActivity extends Omit<ActivityRecord, "posterUrl" | "cropSourceUrl" | "cropSourceSeparate"> {
   posterFilename?: string;
+  cropSourceFilename?: string;
 }
 
 class HttpError extends Error {
@@ -82,9 +86,15 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 function publicActivity(activity: StoredActivity): ActivityRecord {
-  const { posterFilename: _posterFilename, ...rest } = activity;
+  const { posterFilename: _posterFilename, cropSourceFilename: _cropSourceFilename, ...rest } = activity;
   void _posterFilename;
-  return { ...rest, ...(activity.posterFilename ? { posterUrl: `/api/activities/${activity.id}/poster?v=${encodeURIComponent(activity.updatedAt)}` } : {}) };
+  void _cropSourceFilename;
+  return {
+    ...rest,
+    ...(activity.posterFilename ? { posterUrl: `/api/activities/${activity.id}/poster?v=${encodeURIComponent(activity.updatedAt)}` } : {}),
+    ...(activity.cropSourceFilename || activity.posterFilename ? { cropSourceUrl: `/api/activities/${activity.id}/crop-source?v=${encodeURIComponent(activity.updatedAt)}` } : {}),
+    cropSourceSeparate: !!activity.cropSourceFilename && activity.cropSourceFilename !== activity.posterFilename,
+  };
 }
 
 async function streamImage(response: ServerResponse, filename: string, mime: string, immutable = false) {
@@ -110,6 +120,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
   const storePath = join(dataDir, "activities.json");
   const posterDir = join(dataDir, "posters");
   await mkdir(posterDir, { recursive: true });
+  const weiboStore = createWeiboStore(dataDir);
   let activities: StoredActivity[];
   try {
     const saved = JSON.parse(await readFile(storePath, "utf8"));
@@ -118,7 +129,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
       const raw = object(item);
       if (typeof raw.id !== "string" || !new RegExp(`^${ID_PATTERN}$`).test(raw.id)
         || typeof raw.city !== "string" || typeof raw.createdAt !== "string"
-        || typeof raw.updatedAt !== "string" || (raw.posterFilename !== undefined && (typeof raw.posterFilename !== "string" || !/^[a-f0-9-]{36}-[a-f0-9-]{36}\.(jpg|png|webp)$/.test(raw.posterFilename)))) {
+        || typeof raw.updatedAt !== "string" || [raw.posterFilename, raw.cropSourceFilename].some((filename) => filename !== undefined && (typeof filename !== "string" || !/^[a-f0-9-]{36}-[a-f0-9-]{36}\.(jpg|png|webp)$/.test(filename)))) {
         throw new Error("Invalid stored activity");
       }
       return { ...raw, data: validateEventData(raw.data) } as unknown as StoredActivity;
@@ -193,6 +204,51 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     try { await unlink(join(posterDir, filename)); }
     catch (error) { console.error("Poster cleanup failed", error); }
   }
+  async function writeActivityImages(id: string, input: Record<string, unknown>) {
+    let posterFilename: string | undefined;
+    let cropSourceFilename: string | undefined;
+    try {
+      if (input.poster !== undefined) posterFilename = await writePoster(id, input.poster);
+      if (input.cropSource !== undefined) {
+        cropSourceFilename = input.cropSource === input.poster && posterFilename
+          ? posterFilename : await writePoster(id, input.cropSource);
+      }
+      return { posterFilename, cropSourceFilename };
+    } catch (error) {
+      await removePoster(posterFilename);
+      if (cropSourceFilename !== posterFilename) await removePoster(cropSourceFilename);
+      throw error;
+    }
+  }
+  async function removeUnreferenced(old: StoredActivity, next?: StoredActivity) {
+    for (const filename of new Set([old.posterFilename, old.cropSourceFilename])) {
+      if (filename && filename !== next?.posterFilename && filename !== next?.cropSourceFilename)
+        await removePoster(filename);
+    }
+  }
+  const importLimits = new Map<string, { count: number; until: number }>();
+  function limitImport(request: IncomingMessage, kind: "weibo" | "ai") {
+    const key = `${sessionId(request)}:${kind}`;
+    const current = importLimits.get(key);
+    if (current && current.until > Date.now() && current.count >= (kind === "ai" ? 10 : 30))
+      throw new HttpError(429, "操作过于频繁，请稍后重试。");
+    importLimits.set(key, { count: current && current.until > Date.now() ? current.count + 1 : 1, until: Date.now() + 15 * 60_000 });
+  }
+  async function aiSource(value: unknown): Promise<AiImage | null> {
+    if (value === undefined || value === null) return null;
+    const source = object(value);
+    if (source.kind === "weibo" && typeof source.importId === "string" && typeof source.imageId === "string") {
+      const asset = await weiboStore.asset(source.importId, source.imageId);
+      return { bytes: asset.bytes, mime: asset.mime, width: asset.width, height: asset.height };
+    }
+    if (source.kind === "upload") {
+      const picture = posterFrom(source.dataUrl);
+      const dimensions = imageSize(picture.bytes);
+      if (!dimensions.width || !dimensions.height) throw new HttpError(400, "无法读取图片尺寸。");
+      return { bytes: picture.bytes, mime: picture.extension === "jpg" ? "image/jpeg" : `image/${picture.extension}`, width: dimensions.width, height: dimensions.height };
+    }
+    throw new HttpError(400, "AI 图片来源无效。");
+  }
 
   return createServer(async (request, response) => {
     try {
@@ -214,6 +270,15 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         await streamImage(response, join(posterDir, activity.posterFilename), extension === "jpg" ? "image/jpeg" : `image/${extension}`);
         return;
       }
+      const cropPath = new RegExp(`^/api/activities/(${ID_PATTERN})/crop-source$`).exec(path);
+      if (method === "GET" && cropPath) {
+        const activity = activities.find((item) => item.id === cropPath[1]);
+        const filename = activity?.cropSourceFilename ?? activity?.posterFilename;
+        if (!filename) throw new HttpError(404, "团体裁剪原图不存在。");
+        const extension = filename.split(".").pop();
+        await streamImage(response, join(posterDir, filename), extension === "jpg" ? "image/jpeg" : `image/${extension}`);
+        return;
+      }
       // Preserve old published group thumbnails for the migrated activity.
       const oldImagePath = /^\/api\/images\/(\d+)\/([a-f0-9]{64})\.(webp|jpg|png)$/.exec(path);
       if (method === "GET" && oldImagePath) {
@@ -221,6 +286,17 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         return;
       }
       if (method === "GET" && path === "/api/admin/session") { sendJson(response, 200, { authenticated: !!sessionId(request) }); return; }
+      if (method === "GET" && path === "/api/admin/ai/status") {
+        requireAdmin(request);
+        sendJson(response, 200, { configured: !!(process.env.OPENAI_API_KEY && process.env.OPENAI_OCR_MODEL) }); return;
+      }
+      const importAssetPath = /^\/api\/admin\/weibo\/import-assets\/([a-f0-9-]{36})\/(image_\d{3})$/.exec(path);
+      if (method === "GET" && importAssetPath) {
+        requireAdmin(request);
+        const asset = await weiboStore.asset(importAssetPath[1], importAssetPath[2]);
+        await streamImage(response, asset.filename, asset.mime);
+        return;
+      }
       if (method === "POST" && path === "/api/admin/login") {
         requireSafeWrite(request);
         const address = String(request.headers["x-real-ip"] ?? request.socket.remoteAddress ?? "unknown");
@@ -249,6 +325,35 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         requireSafeWrite(request);
         requireAdmin(request);
       }
+      if (method === "POST" && path === "/api/admin/weibo/parse") {
+        limitImport(request, "weibo");
+        const input = await readJson(request);
+        if (typeof input.url !== "string" || typeof input.cookie !== "string") throw new HttpError(400, "请输入微博链接和 Cookie。");
+        try { sendJson(response, 200, await weiboStore.parse(input.url, input.cookie)); }
+        catch (error) {
+          if (error instanceof WeiboError) throw error;
+          throw new WeiboError("WEIBO_REQUEST_FAILED", "微博读取失败，请改用本地上传或手动 JSON。", 502);
+        }
+        return;
+      }
+      if (method === "POST" && path === "/api/admin/ai/parse-poster") {
+        limitImport(request, "ai");
+        const input = await readJson(request);
+        if (input.mode !== "normal" && input.mode !== "high") throw new HttpError(400, "AI 模式无效。");
+        if (input.weiboText !== undefined && (typeof input.weiboText !== "string" || input.weiboText.length > 20_000))
+          throw new HttpError(400, "微博正文不能超过 20000 字符。");
+        const timetable = await aiSource(input.timetableSource);
+        const crop = input.cropSource === undefined || JSON.stringify(input.cropSource) === JSON.stringify(input.timetableSource)
+          ? timetable : await aiSource(input.cropSource);
+        const result = await recognizeEvent({
+          timetable, crop, postText: String(input.weiboText ?? ""), mode: input.mode,
+          apiKey: process.env.OPENAI_API_KEY,
+          normalModel: process.env.OPENAI_OCR_MODEL,
+          highModel: process.env.OPENAI_OCR_MODEL_HIGH,
+        });
+        sendJson(response, 200, result);
+        return;
+      }
       if (method === "POST" && path === "/api/admin/activities") {
         const input = await readJson(request);
         const city = cityFrom(input.city);
@@ -256,10 +361,10 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         const result = await exclusive(async () => {
           const id = randomUUID();
           const now = new Date().toISOString();
-          const filename = input.poster === undefined ? undefined : await writePoster(id, input.poster);
-          const activity: StoredActivity = { id, city, data, createdAt: now, updatedAt: now, ...(filename ? { posterFilename: filename } : {}) };
+          const assets = await writeActivityImages(id, input);
+          const activity: StoredActivity = { id, city, data, createdAt: now, updatedAt: now, ...assets };
           try { await save([...activities, activity]); }
-          catch (error) { await removePoster(filename); throw error; }
+          catch (error) { await removeUnreferenced(activity); throw error; }
           return publicActivity(activity);
         });
         sendJson(response, 201, result); return;
@@ -272,11 +377,16 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         const result = await exclusive(async () => {
           const old = activities.find((item) => item.id === adminActivityPath[1]);
           if (!old) throw new HttpError(404, "活动不存在或已被删除。");
-          const filename = input.poster === undefined ? undefined : await writePoster(old.id, input.poster);
-          const next = { ...old, city, data, updatedAt: new Date().toISOString(), ...(filename ? { posterFilename: filename, images: {} } : {}) };
+          const assets = await writeActivityImages(old.id, input);
+          const next = { ...old, city, data, updatedAt: new Date().toISOString(),
+            ...(assets.posterFilename ? { posterFilename: assets.posterFilename, images: {} } : {}),
+            ...(assets.cropSourceFilename ? { cropSourceFilename: assets.cropSourceFilename, images: {} }
+              : assets.posterFilename && old.cropSourceFilename === old.posterFilename
+                ? { cropSourceFilename: assets.posterFilename, images: {} } : {}),
+          };
           try { await save(activities.map((item) => item.id === old.id ? next : item)); }
-          catch (error) { await removePoster(filename); throw error; }
-          if (filename) await removePoster(old.posterFilename);
+          catch (error) { await removeUnreferenced(next, old); throw error; }
+          await removeUnreferenced(old, next);
           return publicActivity(next);
         });
         sendJson(response, 200, result); return;
@@ -286,15 +396,17 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
           const old = activities.find((item) => item.id === adminActivityPath[1]);
           if (!old) throw new HttpError(404, "活动不存在或已被删除。");
           await save(activities.filter((item) => item.id !== old.id));
-          await removePoster(old.posterFilename);
+          await removeUnreferenced(old);
         });
         sendJson(response, 200, { ok: true }); return;
       }
       throw new HttpError(404, "接口不存在。");
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500;
+      const status = error instanceof HttpError || error instanceof WeiboError || error instanceof AiImportError ? error.status : 500;
       if (status === 500) console.error(error);
-      if (!response.headersSent) sendJson(response, status, { error: status === 500 ? "服务器操作失败，请稍后重试。" : (error as Error).message });
+      if (!response.headersSent) sendJson(response, status, error instanceof WeiboError || error instanceof AiImportError
+        ? { error: { code: error.code, message: error.message } }
+        : { error: status === 500 ? "服务器操作失败，请稍后重试。" : (error as Error).message });
     }
   });
 }

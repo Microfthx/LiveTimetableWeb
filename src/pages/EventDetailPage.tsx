@@ -54,10 +54,11 @@ export function EventDetailPage({ id }: { id: string }) {
     let sourceUrl = "";
     let generated: RuntimeGroupImages = {};
     setImages(record.images ?? {});
-    if (record.posterUrl) {
+    const cropUrl = record.cropSourceUrl ?? record.posterUrl;
+    if (cropUrl) {
       (async () => {
         try {
-          const response = await fetch(record.posterUrl!, { cache: "no-store" });
+          const response = await fetch(cropUrl, { cache: "no-store" });
           if (!response.ok) throw new Error("海报读取失败");
           const blob = await response.blob();
           const file = new File([blob], "activity-poster", { type: blob.type });

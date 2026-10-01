@@ -17,9 +17,9 @@ npm run dev:server
 
 ## 数据与管理
 
-OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version: "1.0"`。网站层 `ActivityRecord` 将 `id`、`city`、`posterUrl`、时间戳与原有 `EventData` 包装在一起；城市没有写入 OCR JSON。服务器使用现有 Node 服务和原子写入的 `DATA_DIR/activities.json` 持久化活动，原始海报单独保存在 `DATA_DIR/posters/`，不放入 JSON。首次启动会从旧 `state.json` 迁入原共享活动，并保留该文件及旧团体缩略图。
+OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version: "1.0"`。网站层 `ActivityRecord` 将 `id`、`city`、`posterUrl`、`cropSourceUrl`、时间戳与原有 `EventData` 包装在一起；城市和图片角色不写入正式 `EventData`。服务器使用现有 Node 服务和原子写入的 `DATA_DIR/activities.json` 持久化活动，正式图片单独保存在 `DATA_DIR/posters/`，不放入 JSON。首次启动会从旧 `state.json` 迁入原共享活动，并保留该文件及旧团体缩略图。智能导入流程见 [docs/SMART_IMPORT.md](docs/SMART_IMPORT.md)。
 
-普通用户可读取 `GET /api/activities`、`GET /api/activities/:id` 和 `GET /api/activities/:id/poster`。管理操作使用 `POST /api/admin/login`、`GET /api/admin/session`、`POST /api/admin/logout`、`POST /api/admin/activities`、`PATCH /api/admin/activities/:id`、`DELETE /api/admin/activities/:id`。所有管理写请求均由服务器验证 HttpOnly 签名会话；密钥不写入前端或 localStorage。浏览器对每场活动使用独立的 `live-idol-delay:<id>`，不会改动服务器活动 JSON。
+普通用户可读取 `GET /api/activities`、`GET /api/activities/:id`、`GET /api/activities/:id/poster` 和 `GET /api/activities/:id/crop-source`。管理操作使用原有活动 CRUD，新增 `POST /api/admin/weibo/parse`、`GET /api/admin/weibo/import-assets/:importId/:imageId`、`GET /api/admin/ai/status` 和 `POST /api/admin/ai/parse-poster`。所有管理写请求均由服务器验证 HttpOnly 签名会话；密钥不写入前端或 localStorage。浏览器对每场活动使用独立的 `live-idol-delay:<id>`，不会改动服务器活动 JSON。
 
 ## 阿里云部署
 
@@ -28,6 +28,9 @@ OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version:
 ```ini
 ADMIN_ACCESS_KEY=请使用长随机密钥
 ADMIN_SESSION_SECRET=请使用独立的至少32字符随机密钥
+OPENAI_API_KEY=请从 OpenAI 平台配置服务器端密钥
+OPENAI_OCR_MODEL=gpt-4.1-mini
+OPENAI_OCR_MODEL_HIGH=gpt-4.1
 ```
 
 `ADMIN_ACCESS_KEY` 可沿用旧版管理员密钥，以便管理员用原密钥登录；旧 `WRITE_TOKEN` 不再使用。生产部署需让环境文件仅 root 可读，并对数据目录保持服务用户可写。当前服务器通过 HTTP IP 访问；在可信域名和 HTTPS 配置完成前，管理密钥与会话传输不受 TLS 保护。HTTPS 下 API 会给会话 Cookie 添加 `Secure`。

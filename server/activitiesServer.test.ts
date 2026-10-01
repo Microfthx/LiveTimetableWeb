@@ -50,6 +50,8 @@ it("migrates the old shared event and blocks unauthenticated writes", async () =
   expect(records[0].city).toBe("未设置");
   expect((await request(`/api/admin/activities/${records[0].id}`, "DELETE", undefined, false)).status).toBe(401);
   expect((await request("/api/admin/activities", "POST", { city: "上海", data: demoData }, false)).status).toBe(401);
+  expect((await request("/api/admin/weibo/parse", "POST", { url: "https://m.weibo.cn/detail/1234567890123", cookie: "SUB=test" }, false)).status).toBe(401);
+  expect((await request("/api/admin/ai/parse-poster", "POST", { mode: "normal", weiboText: "14:00 Gara" }, false)).status).toBe(401);
   expect((await request("/api/admin/login", "POST", { key: "wrong" })).status).toBe(401);
   const login = await request("/api/admin/login", "POST", { key });
   expect(login.status).toBe(200);
@@ -58,11 +60,36 @@ it("migrates the old shared event and blocks unauthenticated writes", async () =
   expect((await (await request("/api/admin/session")).json()).authenticated).toBe(true);
 });
 
+it("persists separate display and crop assets while keeping old poster fallback", async () => {
+  const otherImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l3sAAAAASUVORK5CYII=";
+  const createdResponse = await request("/api/admin/activities", "POST", { city: "福州", data: demoData, poster: image, cropSource: otherImage });
+  expect(createdResponse.status).toBe(201);
+  const created = await createdResponse.json();
+  expect(created.cropSourceSeparate).toBe(true);
+  expect(created.posterUrl).toContain("/poster");
+  expect(created.cropSourceUrl).toContain("/crop-source");
+  expect((await request(created.posterUrl)).status).toBe(200);
+  expect((await request(created.cropSourceUrl)).status).toBe(200);
+  expect(JSON.stringify(created)).not.toContain("cropSourceFilename");
+  const replacement = await request(`/api/admin/activities/${created.id}`, "PATCH", { city: "福州", data: demoData, cropSource: image });
+  expect(replacement.status).toBe(200);
+  const replacedCover = await request(`/api/admin/activities/${created.id}`, "PATCH", { city: "福州", data: demoData, poster: otherImage });
+  expect(replacedCover.status).toBe(200);
+  const after = await (await request(`/api/activities/${created.id}`)).json();
+  expect(after.posterUrl).toBeDefined();
+  expect(after.cropSourceSeparate).toBe(true);
+  expect((await request(after.cropSourceUrl)).status).toBe(200);
+  expect((await request(`/api/admin/activities/${created.id}`, "DELETE")).status).toBe(200);
+  expect((await request(created.cropSourceUrl)).status).toBe(404);
+});
+
 it("creates, validates, replaces poster, and deletes without exposing disk paths", async () => {
   const createdResponse = await request("/api/admin/activities", "POST", { city: "上海", data: demoData, poster: image });
   expect(createdResponse.status).toBe(201);
   const created = await createdResponse.json();
   expect(created.posterUrl).toMatch(new RegExp(`^/api/activities/${created.id}/poster\\?v=`));
+  expect(created.cropSourceUrl).toContain(`/api/activities/${created.id}/crop-source`);
+  expect(created.cropSourceSeparate).toBe(false);
   expect(JSON.stringify(created)).not.toContain("posterFilename");
   expect((await request(created.posterUrl)).status).toBe(200);
   const invalid = await request(`/api/admin/activities/${created.id}`, "PATCH", { city: "上海", data: { ...demoData, groups: [] } });

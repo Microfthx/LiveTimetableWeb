@@ -75,6 +75,8 @@
 
 ## 导入与存储
 
+智能导入可以使用管理员指定的时间表图片、微博正文，或两者交叉核对。`timetableSource`、`cropSource`、`displayPoster` 都是导入草稿的素材角色，**不加入 EventData v1.0**。若只提供微博正文，`poster` 宽高为 0，所有 `crop` 为全 0。若提供裁剪源，`poster.width/height` 由程序读取该图片实际像素尺寸并覆盖 AI 输出；所有团体的 crop 坐标只相对于这张图片。活动列表封面属于 `ActivityRecord.posterUrl`，可以和 `cropSourceUrl` 不同；旧活动只保存一张海报时，裁剪源回退到 `posterUrl`。
+
 网页解析时校验字段、时间、重复 ID、海报尺寸、图片类型和裁剪范围；严重 JSON/关键字段错误不会覆盖现有活动，单个 crop 无效会提示并降级为全 0。无海报仍可导入，图片回退至已有 `image_base64` 或占位图。上传的原始海报仅在当前页面内存；确认导入时，浏览器生成的缩略图作为**独立于 OCR JSON 的传输字段**上传。服务器持久化团体缩略图、规范化的 `EventData` 和 `delay_minutes`。刷新或换浏览器后，由服务器返回同一份活动、延迟和图片。原始高清海报仍不持久化；再次调整 crop 需要重新上传海报。
 
 `GET /api/state` 返回 `{ revision, data, images, requires_auth }`。`data` 严格遵守本文件的 `EventData`，`images` 是按 `group.id` 索引的服务器图片 URL；`revision` 用于识别更新，不写入 OCR JSON。浏览器每三秒读取共享状态，切回页面时也立即刷新。`PATCH /api/delay` 只修改延迟，原始演出时间及图片保持不变。`PUT /api/event` 在请求体中提供 `{ revision, data, images }`，其中 `images` 是浏览器裁剪出的 WebP/JPEG/PNG data URL 传输字段，服务器单独保存为图片文件，**绝不写回 `data` 或 OCR JSON**。旧版浏览器 `localStorage` 数据保留，管理员可在设置中显式发布到服务器；不自动用某个访客的旧数据覆盖共享活动。服务端复用网页的 `validateEventData()` 实施同一数据校验。

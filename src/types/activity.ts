@@ -5,6 +5,9 @@ export interface ActivityRecord {
   id: string;
   city: string;
   posterUrl?: string;
+  /** Source for normalized group crops; old records fall back to posterUrl. */
+  cropSourceUrl?: string;
+  cropSourceSeparate?: boolean;
   data: EventData;
   createdAt: string;
   updatedAt: string;

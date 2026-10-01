@@ -17,7 +17,10 @@ export function AdminPage() {
   const [view, setView] = useState<"list" | "create" | "edit">("list");
   const [editing, setEditing] = useState<ActivityRecord | null>(null);
   const [poster, setPoster] = useState<PosterSource | null>(null);
+  const [displayPoster, setDisplayPoster] = useState<PosterSource | null>(null);
   const posterRef = useRef<PosterSource | null>(null);
+  const displayPosterRef = useRef<PosterSource | null>(null);
+  const originalDisplayPosterRef = useRef<PosterSource | null>(null);
   const originalPosterRef = useRef<PosterSource | null>(null);
   const savedRef = useRef(false);
   const dirtyRef = useRef(false);
@@ -37,7 +40,7 @@ export function AdminPage() {
     }).catch(() => { if (active) { setAuthenticated(false); setError("无法连接服务器。"); } });
     return () => { active = false; };
   }, []);
-  useEffect(() => () => { if (posterRef.current) URL.revokeObjectURL(posterRef.current.url); }, []);
+  useEffect(() => () => { if (posterRef.current) URL.revokeObjectURL(posterRef.current.url); if (displayPosterRef.current && displayPosterRef.current !== posterRef.current) URL.revokeObjectURL(displayPosterRef.current.url); }, []);
   const selectPoster = (selected: PosterSource) => {
     if (posterRef.current) URL.revokeObjectURL(posterRef.current.url);
     posterRef.current = selected;
@@ -47,6 +50,12 @@ export function AdminPage() {
     if (posterRef.current) URL.revokeObjectURL(posterRef.current.url);
     posterRef.current = null;
     setPoster(null);
+  };
+  const selectDisplayPoster = (selected: PosterSource | null) => {
+    if (displayPosterRef.current && displayPosterRef.current !== posterRef.current && displayPosterRef.current !== selected)
+      URL.revokeObjectURL(displayPosterRef.current.url);
+    displayPosterRef.current = selected;
+    setDisplayPoster(selected);
   };
   const signIn = async () => {
     if (busy) return;
@@ -62,17 +71,26 @@ export function AdminPage() {
     finally { setBusy(false); }
   };
   const beginEdit = async (activity: ActivityRecord) => {
-    clearPoster(); originalPosterRef.current = null; dirtyRef.current = false;
+    clearPoster(); selectDisplayPoster(null); originalPosterRef.current = null; originalDisplayPosterRef.current = null; dirtyRef.current = false;
     setEditing(activity); setError(""); setBusy(true);
     try {
-      if (activity.posterUrl) {
-        const response = await fetch(activity.posterUrl, { cache: "no-store" });
+      if (activity.cropSourceUrl || activity.posterUrl) {
+        const response = await fetch(activity.cropSourceUrl ?? activity.posterUrl!, { cache: "no-store" });
         if (!response.ok) throw new Error("海报读取失败，请重试。");
         const blob = await response.blob();
         const source = await readPoster(new File([blob], "当前海报", { type: blob.type }));
         posterRef.current = source;
         originalPosterRef.current = source;
         setPoster(source);
+      }
+      if (activity.cropSourceSeparate && activity.posterUrl) {
+        const response = await fetch(activity.posterUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("活动封面读取失败，请重试。");
+        const blob = await response.blob();
+        const cover = await readPoster(new File([blob], "当前活动封面", { type: blob.type }));
+        displayPosterRef.current = cover;
+        originalDisplayPosterRef.current = cover;
+        setDisplayPoster(cover);
       }
       setView("edit");
     } catch (cause) {
@@ -85,7 +103,7 @@ export function AdminPage() {
     if (view === "edit" && dirtyRef.current && !savedRef.current && !window.confirm("修改尚未保存。确定离开编辑页面吗？")) return;
     savedRef.current = false;
     dirtyRef.current = false;
-    clearPoster(); originalPosterRef.current = null; setEditing(null); setView("list");
+    clearPoster(); selectDisplayPoster(null); originalPosterRef.current = null; originalDisplayPosterRef.current = null; setEditing(null); setView("list");
   };
   const saveImport = async (data: ActivityRecord["data"], _images: Record<string, string>, selected: PosterSource | null, city: string) => {
     if (busy) throw new Error("正在保存，请稍后重试。");
@@ -93,16 +111,17 @@ export function AdminPage() {
     try {
       if (view === "edit" && editing) {
         const replacement = selected && selected !== originalPosterRef.current ? selected : undefined;
-        await updateActivity(editing.id, city, data, replacement);
+        const coverReplacement = displayPosterRef.current && displayPosterRef.current !== originalDisplayPosterRef.current ? displayPosterRef.current : undefined;
+        await updateActivity(editing.id, city, data, editing.cropSourceSeparate ? coverReplacement : replacement, editing.cropSourceSeparate ? replacement : undefined);
         setNotice("活动修改已保存。");
       } else {
-        await createActivity(city, data, selected);
+        await createActivity(city, data, displayPosterRef.current ?? selected, selected);
         setNotice("新活动已发布，所有访客现在都可以查看。");
       }
       await refresh();
       savedRef.current = true;
       dirtyRef.current = false;
-      clearPoster(); originalPosterRef.current = null; setEditing(null); setView("list");
+      clearPoster(); selectDisplayPoster(null); originalPosterRef.current = null; originalDisplayPosterRef.current = null; setEditing(null); setView("list");
     } catch (cause) {
       if (cause instanceof Error && "status" in cause && cause.status === 401) setAuthenticated(false);
       throw cause;
@@ -142,7 +161,7 @@ export function AdminPage() {
       <header className="admin-header"><div><p>LIVE IDOL TIMETABLE</p><h1>活动管理</h1></div><button className="text-button" onClick={() => void signOut()} disabled={busy}><LogOut size={17} /> 退出管理</button></header>
       {notice && <p className="form-success" role="status">{notice}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="primary-button admin-add" disabled={busy} onClick={() => { clearPoster(); dirtyRef.current = false; setEditing(null); setView("create"); }}><Plus size={19} /> 导入新活动</button>
+      <button className="primary-button admin-add" disabled={busy} onClick={() => { clearPoster(); selectDisplayPoster(null); dirtyRef.current = false; setEditing(null); setView("create"); }}><Plus size={19} /> 导入新活动</button>
       <div className="admin-filters"><input aria-label="搜索活动" placeholder="搜索活动或场地" value={search} onChange={(event) => setSearch(event.target.value)} />
         <select aria-label="筛选城市" value={cityFilter} onChange={(event) => setCityFilter(event.target.value)}><option value="">全部城市</option>{cities.map((city) => <option key={city}>{city}</option>)}</select></div>
       <div className="admin-activities">{shown.length ? shown.map((activity) => <article className="admin-activity" key={activity.id}>
@@ -158,6 +177,9 @@ export function AdminPage() {
         duplicateTitles={activities.map((item) => `${item.data.event.date}:${item.data.event.title}`)}
         originalPosterRatio={originalPosterRef.current ? originalPosterRef.current.width / originalPosterRef.current.height : undefined}
         replacementPending={view === "edit" && !!poster && poster !== originalPosterRef.current}
+        smartEnabled={view === "create"} onDisplayPosterSelect={selectDisplayPoster}
+        displayPoster={displayPoster} showDisplayPosterEditor={view === "edit" && !!editing?.cropSourceSeparate}
+        coverReplacementPending={view === "edit" && !!displayPoster && displayPoster !== originalDisplayPosterRef.current}
         onPosterSelect={selectPoster} onPosterClear={clearPoster} onDirtyChange={(dirty) => { dirtyRef.current = dirty; }} onImport={saveImport} onClose={closeEditor} />}
     </div>
   );
