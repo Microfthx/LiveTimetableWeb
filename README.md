@@ -1,27 +1,33 @@
-# Live Idol Timetable
+# Live Idol Timetable（服务器同步版）
 
-面向手机浏览器的演出时间表。首次打开显示内置 Demo；导入 OCR JSON 后，页面依据当前时间自动显示正在演出、下一组、进度和完整时间轴。现场延迟独立于原始排程保存。
+React/Vite 前端与 Node API 组成的演出活动网站。`/` 展示今日、明日、即将到来和历史活动；`/events/:id` 复用原有 Now Playing、Next Up、Timetable、Delay 与海报 crop 功能；`/admin` 管理活动。
 
-## 本地运行
+## 本地开发
 
-本项目已在 Node.js v24.14.1 下验证。
+Node.js 22+，执行 `npm install`。先设置环境变量，再分别启动 API 和 Vite：
 
-```bash
-npm install
+```powershell
+$env:ADMIN_ACCESS_KEY = "仅用于本地开发的密钥"
+$env:ADMIN_SESSION_SECRET = "至少32字符的本地开发随机会话密钥"
+$env:DATA_DIR = "./server-data"
 npm run dev:server
-npm run dev
 ```
 
-在两个终端分别运行 API 与 Vite。开发 API 默认无需密钥；要测试管理员验证，可在启动 API 前设置 `WRITE_TOKEN` 环境变量。打开 Vite 显示的本地地址。手机与电脑在同一网络时，可使用 Network 地址访问。运行 `npm test` 执行时间、JSON 与共享 API 测试，`npm run build` 生成可部署的 `dist/` 和 `dist-server/`。
+另开终端执行 `npm run dev`。`npm run build` 构建 `dist/` 和 `dist-server/`；`npm test` 运行校验、时间分类、迁移与 API 鉴权测试。当前没有 lint 脚本。
 
-## 服务器部署
+## 数据与管理
 
-阿里云服务器使用独立的 Nginx 服务监听 `9999`，Node API 只监听服务器本机 `127.0.0.1:10001`。配置位于 `deploy/nginx-9999.conf`、`deploy/live-idol-timetable.service` 和 `deploy/live-idol-timetable-api.service`。构建文件放在 `/opt/live-idol-timetable/releases/`，`current` 和 `api-current` 符号链接指向当前前端与 API 版本；共享数据和团体图片持久化在 `/var/lib/live-idol-timetable/`，不随版本切换删除。访问地址为 `http://120.24.94.69:9999/`。管理服务可使用 `systemctl status|restart live-idol-timetable` 和 `systemctl status|restart live-idol-timetable-api`。
+OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version: "1.0"`。网站层 `ActivityRecord` 将 `id`、`city`、`posterUrl`、时间戳与原有 `EventData` 包装在一起；城市没有写入 OCR JSON。服务器使用现有 Node 服务和原子写入的 `DATA_DIR/activities.json` 持久化活动，原始海报单独保存在 `DATA_DIR/posters/`，不放入 JSON。首次启动会从旧 `state.json` 迁入原共享活动，并保留该文件及旧团体缩略图。
 
-活动、延迟和裁剪后的团体图片保存在服务器，所有浏览器自动同步。只有输入管理员密钥并通过验证的浏览器可修改；密钥保存在该浏览器的 `localStorage`，清除网站数据后需重新输入。旧版浏览器数据不会自动覆盖服务器活动，管理员可以从设置页显式发布。网页仍需用户把海报和内置 Prompt 发给 ChatGPT，再把返回的 JSON 粘贴回来；服务端不执行 OCR。服务器目前通过 HTTP IP 地址访问，管理员密钥在网络传输时不受 TLS 保护，投入不受信任网络使用前应配置 HTTPS。
+普通用户可读取 `GET /api/activities`、`GET /api/activities/:id` 和 `GET /api/activities/:id/poster`。管理操作使用 `POST /api/admin/login`、`GET /api/admin/session`、`POST /api/admin/logout`、`POST /api/admin/activities`、`PATCH /api/admin/activities/:id`、`DELETE /api/admin/activities/:id`。所有管理写请求均由服务器验证 HttpOnly 签名会话；密钥不写入前端或 localStorage。浏览器对每场活动使用独立的 `live-idol-delay:<id>`，不会改动服务器活动 JSON。
 
-## 数据协议
+## 阿里云部署
 
-唯一规范是 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md)。OCR Prompt、网页校验与未来后端实现都应以它为准。网页类型见 `src/types/timetable.ts`，导入校验见 `src/utils/validation.ts`，时间与延迟计算见 `src/utils/time.ts`。
+独立 Nginx 监听 `9999`，Node API 仅监听本机 `127.0.0.1:10001`。部署文件位于 `deploy/`。前端由 `/opt/live-idol-timetable/current` 提供，API 从 `/opt/live-idol-timetable/api-current/server/main.js` 启动，数据位于 `/var/lib/live-idol-timetable/`。`/etc/live-idol-timetable-api.env` 至少设置：
 
-旧版图片仍可用纯 Base64 放在 `image_base64`；新 OCR 流程优先使用当前活动的服务器裁剪图。服务器保存缩略图，刷新后仍能显示；未保存原始高清海报，调整裁剪时需重新上传。Demo 未捏造团体照片。
+```ini
+ADMIN_ACCESS_KEY=请使用长随机密钥
+ADMIN_SESSION_SECRET=请使用独立的至少32字符随机密钥
+```
+
+`ADMIN_ACCESS_KEY` 可沿用旧版管理员密钥，以便管理员用原密钥登录；旧 `WRITE_TOKEN` 不再使用。生产部署需让环境文件仅 root 可读，并对数据目录保持服务用户可写。当前服务器通过 HTTP IP 访问；在可信域名和 HTTPS 配置完成前，管理密钥与会话传输不受 TLS 保护。HTTPS 下 API 会给会话 Cookie 添加 `Secure`。

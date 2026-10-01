@@ -13,6 +13,7 @@
   "include": [
     "server/**/*.ts",
     "src/data/demo.ts",
+    "src/types/activity.ts",
     "src/types/timetable.ts",
     "src/utils/time.ts",
     "src/utils/validation.ts"

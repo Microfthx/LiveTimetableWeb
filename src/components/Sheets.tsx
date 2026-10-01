@@ -171,23 +171,40 @@ export function DelayBottomSheet({
 export function ImportBottomSheet({
   mode,
   poster,
+  initialData,
+  initialCity = "",
+  sheetTitle = "导入 Timetable",
+  submitLabel = "确认导入",
+  duplicateTitles = [],
+  originalPosterRatio,
+  replacementPending = false,
   onPosterSelect,
   onPosterClear,
+  onDirtyChange,
   onImport,
   onClose,
 }: {
   mode: "paste" | "file" | "poster";
   poster: PosterSource | null;
+  initialData?: EventData;
+  initialCity?: string;
+  sheetTitle?: string;
+  submitLabel?: string;
+  duplicateTitles?: string[];
+  originalPosterRatio?: number;
+  replacementPending?: boolean;
   onPosterSelect: (poster: PosterSource) => void;
   onPosterClear: () => void;
-  onImport: (data: EventData, images: RuntimeGroupImages) => Promise<void>;
+  onDirtyChange?: (dirty: boolean) => void;
+  onImport: (data: EventData, images: RuntimeGroupImages, poster: PosterSource | null, city: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => initialData ? JSON.stringify(initialData, null, 2) : "");
+  const [city, setCity] = useState(initialCity);
   const [candidate, setCandidate] = useState<{
     data: EventData;
     warnings: string[];
-  } | null>(null);
+  } | null>(() => initialData ? parseEventJsonDetailed(JSON.stringify(initialData)) : null);
   const [preview, setPreview] = useState<{
     images: RuntimeGroupImages;
     failed: string[];
@@ -199,6 +216,7 @@ export function ImportBottomSheet({
   const fileRef = useRef<HTMLInputElement>(null);
   const posterRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef<RuntimeGroupImages>({});
+  const confirmingRef = useRef(false);
 
   useEffect(() => {
     if (mode === "file") fileRef.current?.click();
@@ -265,6 +283,7 @@ export function ImportBottomSheet({
     try {
       const value = await file.text();
       setText(value);
+      onDirtyChange?.(true);
       parse(value);
     } catch {
       setError("读取 JSON 文件失败，请重试。");
@@ -277,6 +296,7 @@ export function ImportBottomSheet({
       setPreview({ images: {}, failed: [] });
       setProcessing(!!candidate);
       onPosterSelect(selected);
+      onDirtyChange?.(true);
       setError("");
     } catch (cause) {
       setError(
@@ -295,16 +315,19 @@ export function ImportBottomSheet({
     }
   };
   const confirm = async () => {
-    if (!candidate || processing) return;
+    if (!candidate || processing || confirmingRef.current) return;
+    if (!city.trim()) { setError("请填写活动城市。"); return; }
+    confirmingRef.current = true;
     setProcessing(true);
     try {
-      await onImport(candidate.data, preview.images);
+      await onImport(candidate.data, preview.images, poster, city.trim());
       onClose();
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "服务器保存失败，请重试。",
       );
     } finally {
+      confirmingRef.current = false;
       setProcessing(false);
     }
   };
@@ -323,6 +346,9 @@ export function ImportBottomSheet({
   const data = candidate?.data;
   const ratioDifference =
     data && poster ? posterRatioDifference(data, poster) : null;
+  const replacementRatioDifference = originalPosterRatio && poster
+    ? Math.abs(poster.width / poster.height - originalPosterRatio) / originalPosterRatio
+    : 0;
   const noCropCount =
     data?.groups.filter((group) => !group.crop?.width || !group.crop.height)
       .length ?? 0;
@@ -334,7 +360,10 @@ export function ImportBottomSheet({
     (data && !poster ? 1 : 0);
 
   return (
-    <Sheet title="导入 Timetable" onClose={onClose}>
+    <Sheet title={sheetTitle} onClose={onClose}>
+      <label className="input-label" htmlFor="activity-city">活动城市 *</label>
+      <input id="activity-city" className="activity-city-input" value={city} maxLength={80}
+        onChange={(event) => { setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
       <section className="ocr-workflow" aria-label="AI 海报识别">
         <h3>AI 海报识别</h3>
         <p className="sheet-description">
@@ -374,6 +403,7 @@ export function ImportBottomSheet({
               onClick={() => {
                 setPreview({ images: {}, failed: [] });
                 onPosterClear();
+                onDirtyChange?.(true);
               }}
               disabled={processing}
               aria-label="移除海报"
@@ -382,6 +412,7 @@ export function ImportBottomSheet({
             </button>
           </div>
         )}
+        {replacementPending && <p className="form-warning">新海报尚未保存。请检查裁剪预览后再保存修改。</p>}
         {poster && poster.file.size > 20 * 1024 * 1024 && (
           <p className="form-warning">海报文件较大，处理可能需要一些时间。</p>
         )}
@@ -419,6 +450,7 @@ export function ImportBottomSheet({
             try {
               const value = await navigator.clipboard.readText();
               setText(value);
+              onDirtyChange?.(true);
               parse(value);
             } catch {
               setError("无法读取剪贴板，请直接粘贴到下方输入框。");
@@ -447,6 +479,7 @@ export function ImportBottomSheet({
         disabled={processing}
         onChange={(event) => {
           setText(event.target.value);
+          onDirtyChange?.(true);
           setCandidate(null);
           setError("");
         }}
@@ -462,6 +495,15 @@ export function ImportBottomSheet({
       >
         <FileJson size={18} /> 解析 JSON
       </button>
+      <button className="text-button" disabled={!text.trim() || processing} onClick={() => {
+        try {
+          const parsed = parseEventJsonDetailed(text);
+          setText(JSON.stringify(parsed.data, null, 2));
+          setCandidate(parsed);
+          setError("");
+          onDirtyChange?.(true);
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "JSON 格式错误。"); }
+      }}>格式化 JSON</button>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -474,6 +516,9 @@ export function ImportBottomSheet({
       )}
       {data && !processing && (
         <section className="import-preview" aria-label="导入预览">
+          {duplicateTitles.includes(`${data.event.date}:${data.event.title}`) && !initialData && (
+            <p className="form-warning">可能已经存在相同活动。请核对后再创建。</p>
+          )}
           <div className="ocr-step">
             <span>④</span>
             <strong>导入预览</strong>
@@ -501,6 +546,9 @@ export function ImportBottomSheet({
               上传的海报比例与 OCR
               识别图片不一致，团体图片裁剪位置可能存在偏差。
             </p>
+          )}
+          {replacementRatioDifference > 0.05 && (
+            <p className="form-warning">新海报比例与原海报不同，当前 crop 位置可能错误，请检查下方裁剪区域。</p>
           )}
           {ratioDifference !== null &&
             ratioDifference >= 0.02 &&
@@ -577,9 +625,9 @@ export function ImportBottomSheet({
       <button
         className="primary-button"
         onClick={() => void confirm()}
-        disabled={!data || processing}
+        disabled={!data || !city.trim() || processing}
       >
-        确认导入
+        {processing ? "处理中…" : submitLabel}
       </button>
     </Sheet>
   );
