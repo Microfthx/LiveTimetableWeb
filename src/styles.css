@@ -205,6 +205,7 @@ p {
   overflow: hidden;
   position: relative;
   flex-shrink: 0;
+  aspect-ratio: 16 / 9;
   background: #d6f7f4;
 }
 .group-image img {
@@ -249,6 +250,7 @@ p {
 }
 .now-image {
   width: 41%;
+  align-self: center;
   border-radius: 14px;
 }
 .now-image .group-image-placeholder svg {
@@ -379,7 +381,6 @@ p {
 }
 .next-image {
   width: 54px;
-  height: 54px;
   border-radius: 9px;
 }
 .next-image .group-image-placeholder svg {
@@ -582,7 +583,6 @@ p {
 }
 .timeline-image {
   width: 41px;
-  height: 41px;
   border-radius: 7px;
 }
 .timeline-image .group-image-placeholder {
@@ -1147,7 +1147,6 @@ p {
 }
 .next-image {
   width: 44px;
-  height: 44px;
 }
 .delay-card {
   padding-top: 9px;
@@ -1161,7 +1160,6 @@ p {
 }
 .timeline-image {
   width: 33px;
-  height: 33px;
 }
 .timeline-row:not(:last-child):after {
   top: 24px;
@@ -1358,7 +1356,6 @@ p {
 }
 .preview-group .group-image {
   width: 44px;
-  height: 44px;
   border-radius: 6px;
 }
 .preview-group .group-image-placeholder svg {
