@@ -145,6 +145,26 @@ describe("OCR JSON validation", () => {
     );
   });
 
+  it("uses pasted city as import metadata and fills the current year for month/day", () => {
+    const input = { ...demoData, city: "厦门", event: { ...demoData.event, date: "10月1日" } };
+    const result = parseEventJsonDetailed(JSON.stringify(input));
+    expect(result.city).toBe("厦门");
+    expect(result.data.event.date).toBe(`${new Date().getFullYear()}-10-01`);
+    expect(result.data).not.toHaveProperty("city");
+    expect(parseEventJson(JSON.stringify({ ...input, event: { ...input.event, date: "10/1" } })).event.date)
+      .toBe(`${new Date().getFullYear()}-10-01`);
+    expect(() => parseEventJson(JSON.stringify({ ...input, event: { ...input.event, date: "10月" } })))
+      .toThrow("event.date 请使用 YYYY-MM-DD");
+  });
+
+  it("accepts Unicode indentation without changing whitespace inside values", () => {
+    const json = JSON.stringify({ ...demoData, city: "上 海" }, null, 2)
+      .replace(/^  /gm, "\u3000\u00a0");
+    const result = parseEventJsonDetailed(`\`\`\`json\n${json}\n\`\`\``);
+    expect(result.city).toBe("上 海");
+    expect(result.data.event.title).toBe(demoData.event.title);
+  });
+
   it("warns about an invalid crop and keeps the other groups", () => {
     const input = {
       ...demoData,
@@ -191,12 +211,14 @@ describe("OCR JSON validation", () => {
     expect(OCR_PROMPT).toContain('"schema_version": "1.0"');
     expect(OCR_PROMPT).toContain('"poster": {');
     expect(OCR_PROMPT).toContain('"crop": {');
+    expect(OCR_PROMPT).toContain('"city": ""');
+    expect(OCR_PROMPT).toContain(String(new Date().getFullYear()));
     expect(OCR_PROMPT).toContain("只输出合法 JSON。");
     const mirror = readFileSync(
       new URL("../../json生成prompt.txt", import.meta.url),
       "utf8",
     );
-    expect(mirror.replace(/\r\n/g, "\n").trim()).toBe(
+    expect(mirror.replaceAll("{{CURRENT_YEAR}}", String(new Date().getFullYear())).replace(/\r\n/g, "\n").trim()).toBe(
       OCR_PROMPT.replace(/\r\n/g, "\n").trim(),
     );
   });

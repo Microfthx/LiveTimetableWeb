@@ -234,12 +234,34 @@ export function sanitizeJsonInput(input: string): string {
   let value = input.trim();
   if (value.startsWith("```")) value = value.replace(/^```(?:json)?\s*/i, "");
   if (value.endsWith("```")) value = value.replace(/\s*```$/, "");
-  return value.trim();
+  // JSON only permits ASCII indentation. Replace pasted Unicode whitespace
+  // outside quoted values; leave strings and every other syntax character intact.
+  let inString = false;
+  let escaped = false;
+  let cleaned = "";
+  for (const char of value) {
+    if (char === '"' && !escaped) inString = !inString;
+    cleaned += !inString && /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff]/u.test(char)
+      ? " "
+      : char;
+    escaped = char === "\\" && !escaped;
+    if (char !== "\\") escaped = false;
+  }
+  return cleaned.trim();
+}
+
+function normalizeOcrDate(value: unknown, currentYear = new Date().getFullYear()): unknown {
+  if (typeof value !== "string") return value;
+  const date = value.trim();
+  const match = /^(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*日?$/.exec(date);
+  if (!match) return value;
+  return `${currentYear}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}`;
 }
 
 export function parseEventJsonDetailed(text: string): {
   data: EventData;
   warnings: string[];
+  city?: string;
 } {
   let parsed: unknown;
   try {
@@ -247,7 +269,14 @@ export function parseEventJsonDetailed(text: string): {
   } catch {
     throw new ImportError("JSON 格式错误，请确认复制了完整的 OCR 识别结果。");
   }
-  return validateEventDataDetailed(parsed);
+  const root = object(parsed, "JSON 根节点");
+  const rawEvent = object(root.event, "event");
+  const city = optionalString(root.city);
+  const normalizedInput = {
+    ...root,
+    event: { ...rawEvent, date: normalizeOcrDate(rawEvent.date) },
+  };
+  return { ...validateEventDataDetailed(normalizedInput), city };
 }
 
 export function parseEventJson(text: string): EventData {

@@ -264,13 +264,16 @@ export function ImportBottomSheet({
 
   const parse = (value = text) => {
     try {
+      const parsed = parseEventJsonDetailed(value);
       setPreview({ images: {}, failed: [] });
       setProcessing(!!poster);
-      setCandidate(parseEventJsonDetailed(value));
+      setCandidate(parsed);
+      if (parsed.city) setCity(parsed.city);
       setError("");
       setToast("");
     } catch (cause) {
       setCandidate(null);
+      setProcessing(false);
       setError(cause instanceof Error ? cause.message : "JSON 解析失败。");
     }
   };
@@ -333,7 +336,7 @@ export function ImportBottomSheet({
   };
   const download = () => {
     if (!candidate) return;
-    const blob = new Blob([JSON.stringify(candidate.data, null, 2)], {
+    const blob = new Blob([JSON.stringify({ ...candidate.data, city: city.trim() }, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -498,11 +501,15 @@ export function ImportBottomSheet({
       <button className="text-button" disabled={!text.trim() || processing} onClick={() => {
         try {
           const parsed = parseEventJsonDetailed(text);
-          setText(JSON.stringify(parsed.data, null, 2));
+          const parsedCity = parsed.city || city.trim();
+          setText(JSON.stringify({ ...parsed.data, ...(parsedCity ? { city: parsedCity } : {}) }, null, 2));
           setCandidate(parsed);
+          if (parsed.city) setCity(parsed.city);
+          setPreview({ images: {}, failed: [] });
+          setProcessing(!!poster);
           setError("");
           onDirtyChange?.(true);
-        } catch (cause) { setError(cause instanceof Error ? cause.message : "JSON 格式错误。"); }
+        } catch (cause) { setProcessing(false); setError(cause instanceof Error ? cause.message : "JSON 格式错误。"); }
       }}>格式化 JSON</button>
       {error && (
         <p className="form-error" role="alert">
@@ -611,7 +618,7 @@ export function ImportBottomSheet({
           <div className="export-buttons">
             <button
               onClick={() =>
-                void copy(JSON.stringify(data, null, 2), "JSON 已复制")
+                void copy(JSON.stringify({ ...data, city: city.trim() }, null, 2), "JSON 已复制")
               }
             >
               <ClipboardPaste size={16} /> 复制 JSON

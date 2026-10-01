@@ -1,12 +1,13 @@
 # OCR JSON 数据协议（唯一规范）
 
-本文件定义海报 OCR 输出、网页导入和未来后端接口共同使用的 **schema_version 1.0**。修改任一端的数据结构前，先更新本文件和版本号，再同步校验与示例。所有时间均为活动地点的当地时间；协议不包含时区，部署时应确保活动与查看者处在相同当地时区，或在后续版本增加时区字段。
+本文件定义海报 OCR 输出、网页导入和后端接口使用的 **schema_version 1.0**。`EventData` 结构保持 1.0；OCR 可以附带顶层 `city` 作为导入元数据，导入时提取到 `ActivityRecord.city`，不会写入 `EventData` 或 `event`。所有时间均为活动地点的当地时间；协议不包含时区。
 
 ## 完整示例
 
 ```json
 {
   "schema_version": "1.0",
+  "city": "厦门",
   "event": {
     "title": "7.in XIAMEN Vol.7.0",
     "date": "2026-10-01",
@@ -33,8 +34,9 @@
 | 路径 | 类型 | 规则 |
 | --- | --- | --- |
 | `schema_version` | string | 必填，当前仅接受 `"1.0"`。 |
+| `city` | string | OCR 导入元数据，可选；应根据海报明确的城市、地址或标题识别，无法确定时留空。管理员保存活动前仍须填写城市。后端把它保存在 `ActivityRecord.city`，不放入 `EventData.event`。 |
 | `event.title` | string | 必填，非空。 |
-| `event.date` | string | 必填，真实日历日期，格式 `YYYY-MM-DD`。 |
+| `event.date` | string | 必填，真实日历日期；规范格式 `YYYY-MM-DD`。海报只有月、日而没有年份时，OCR 使用当前年份；网页导入还兼容 `M月D日`、`M-D`、`M/D` 等缺少年份的月日写法，并补当前年。只有月份而没有日时不可猜测，需人工补齐。 |
 | `event.venue` | string | 可选，地点；缺失时界面显示“演出现场”。 |
 | `event.doors_time` | string | 可选，`HH:mm`，24 小时制。 |
 | `event.start_time` | string | 可选，`HH:mm`；强烈建议 OCR 提供，它也是跨午夜排程的日期锚点。 |
@@ -49,7 +51,7 @@
 | `groups[].image_mime` | string | 可选，默认 `image/jpeg`；支持 `image/jpeg`、`image/png`、`image/webp`、`image/gif`。 |
 | `groups[].crop` | object | OCR 输出必填；旧版手工 JSON 可省略。`x`,`y`,`width`,`height` 是相对于**原始上传海报的 naturalWidth / naturalHeight** 的 0–1 坐标。四项全为 0 表示无法确定，显示占位图；有效矩形的宽高必须大于 0 且不可越界。 |
 
-固定 OCR Prompt 的输出**只有**示例所示字段：不输出 `image_base64` / `image_mime`。网页从用户上传的同一张海报，按归一化 crop 生成临时 Blob 图片 URL，按 `group.id` 绑定到当前活动。为兼容第一阶段数据，手工 JSON 和本地已存活动仍可带 `image_base64` / `image_mime`。不认识的额外字段导入时忽略。OCR 无法确认活动名、日期或团体时间时留空；网页会拒绝缺失活动名或日期的数据，团体时间缺失则在预览提示并允许导入。网页可接受 ChatGPT 包在 ` ```json ... ``` ` 中的合法 JSON。
+固定 OCR Prompt 的输出**只有**示例所示字段：不输出 `image_base64` / `image_mime`。顶层 `city` 只供管理导入表单使用，服务器保存的 `EventData` 仍只有 `schema_version`、`event`、`delay_minutes`、`poster`、`groups`。网页从用户上传的同一张海报，按归一化 crop 生成临时 Blob 图片 URL，按 `group.id` 绑定到当前活动。为兼容第一阶段数据，手工 JSON 和本地已存活动仍可带 `image_base64` / `image_mime`。不认识的额外字段导入时忽略。OCR 无法确认活动名、具体日期或团体时间时留空；网页会拒绝缺失活动名或日期的数据，团体时间缺失则在预览提示并允许导入。网页可接受 ChatGPT 包在 ` ```json ... ``` ` 中的合法 JSON，也会将 JSON 语法允许范围之外的常见 Unicode 缩进空白转换为空格；不会自动修复缺逗号等语法错误。
 
 ## 时间语义
 
@@ -64,12 +66,12 @@
 
 1. 仅输出符合上述结构的 JSON 对象；`schema_version` 固定 `"1.0"`。
 2. 按海报原始时间逐组提取，不叠加现场延迟。未知延迟写 0。
-3. 时间统一转成两位小时和分钟（如 `09:05`）；活动日期写 `YYYY-MM-DD`。
+3. 时间统一转成两位小时和分钟（如 `09:05`）；活动日期写 `YYYY-MM-DD`，只有月、日时采用当前年份，只有月份时留空待核对。
 4. `id` 从 `group_001` 按演出时间连续编号；无法识别的字段留空，不编造。
 5. `delay_minutes` 固定为 0；`poster` 放真实输入图片像素尺寸，不知道时宽高都写 0。
 6. 每组必须带 `crop`；无法确定时四项全写 0。OCR 不输出图片 Base64，由网页裁剪。
 
-网页内置的固定完整 Prompt 位于 `src/constants/ocrPrompt.ts`，与本节及上面的 JSON 字段保持一致。更改 Prompt、网页或未来后端之前，先更新此协议。
+完整 Prompt 的唯一文本位于仓库根目录 `json生成prompt.txt`，`src/constants/ocrPrompt.ts` 在运行时填入当前年份。更改 Prompt、网页或后端之前，先更新此协议。
 
 ## 导入与存储
 
