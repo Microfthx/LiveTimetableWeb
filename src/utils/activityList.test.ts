@@ -36,3 +36,9 @@ it("keeps today's finished event in Today with an ended badge", () => {
   expect(todayStatus(record, new Date(2026, 9, 1, 23, 0))).toBe("ended");
   expect(classifyActivities([record], new Date(2026, 9, 1, 23, 0)).today).toHaveLength(1);
 });
+
+it("does not claim an event ended when a scheduled group has no end time", () => {
+  const record = activity("a", "2026-10-01", "厦门", "14:00");
+  record.data = { ...record.data, groups: record.data.groups.map((group, index) => index === 0 ? { ...group, end_time: "" } : group) };
+  expect(todayStatus(record, new Date(2026, 9, 1, 23, 0))).toBe("unknown");
+});

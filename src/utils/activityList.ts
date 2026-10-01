@@ -29,10 +29,12 @@ export function todayStatus(activity: ActivityRecord, now: Date): TodayStatus {
   const anchor = parseTime(activity.data.event.start_time ?? "");
   const starts: number[] = [];
   const ends: number[] = [];
+  let missingEnd = false;
   for (const group of activity.data.groups) {
     const start = parseTime(group.start_time);
     const end = parseTime(group.end_time);
     if (Number.isFinite(start)) starts.push(start + (Number.isFinite(anchor) && start < anchor ? 1440 : 0));
+    if (Number.isFinite(start) && !Number.isFinite(end)) missingEnd = true;
     if (Number.isFinite(end)) {
       let adjusted = end;
       if (Number.isFinite(start) && end <= start) adjusted += 1440;
@@ -44,6 +46,7 @@ export function todayStatus(activity: ActivityRecord, now: Date): TodayStatus {
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const first = midnight + Math.min(...starts) * 60_000;
     if (now.getTime() < first) return "not-started";
+    if (missingEnd) return "unknown";
     if (ends.length) return now.getTime() >= midnight + Math.max(...ends) * 60_000 ? "ended" : "live";
     return "unknown";
   }
