@@ -29,8 +29,8 @@ OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version:
 ADMIN_ACCESS_KEY=请使用长随机密钥
 ADMIN_SESSION_SECRET=请使用独立的至少32字符随机密钥
 OPENAI_API_KEY=请从 OpenAI 平台配置服务器端密钥
-OPENAI_OCR_MODEL=gpt-4.1-mini
-OPENAI_OCR_MODEL_HIGH=gpt-4.1
+OPENAI_OCR_MODEL=gpt-6.1-sol
+OPENAI_OCR_MODEL_HIGH=gpt-6-astra
 ```
 
 `ADMIN_ACCESS_KEY` 可沿用旧版管理员密钥，以便管理员用原密钥登录；旧 `WRITE_TOKEN` 不再使用。生产部署需让环境文件仅 root 可读，并对数据目录保持服务用户可写。当前服务器通过 HTTP IP 访问；在可信域名和 HTTPS 配置完成前，管理密钥与会话传输不受 TLS 保护。HTTPS 下 API 会给会话 Cookie 添加 `Secure`。

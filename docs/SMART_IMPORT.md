@@ -24,6 +24,6 @@
 
 ## 服务器配置
 
-在 API 服务的私有环境文件中设置 `OPENAI_API_KEY`、`OPENAI_OCR_MODEL`、`OPENAI_OCR_MODEL_HIGH`；不要使用 `VITE_` 前缀或提交真实值。普通/高精度模型应支持图像理解与 Structured Outputs。没有 Key 时微博读取和手动 JSON 仍可用，AI 按钮提示未配置。服务器需安装 `openai` 和 `image-size` 生产依赖，`/api/` 的请求体上限为 80 MB。所有微博与 AI 接口都沿用管理员 HttpOnly session、写请求来源校验和基础限流。
+在 API 服务的私有环境文件中设置 `OPENAI_API_KEY`、`OPENAI_OCR_MODEL`、`OPENAI_OCR_MODEL_HIGH`；默认普通识别为 `gpt-6.1-sol`，高精度重新识别为 `gpt-6-astra`。不要使用 `VITE_` 前缀或提交真实值。模型须支持图像理解与 Structured Outputs。没有 Key 时微博读取和手动 JSON 仍可用，AI 按钮提示未配置。服务器需安装 `openai` 和 `image-size` 生产依赖，`/api/` 的请求体上限为 80 MB。所有微博与 AI 接口都沿用管理员 HttpOnly session、写请求来源校验和基础限流。
 
 当前微博获取基于单条博文的移动端详情接口；微博若改变接口或要求额外验证，界面会提示失败，管理员可以使用本地图片或手动 JSON 继续。OpenAI 调用只在管理员点击按钮时发生，失败不清空素材、角色、城市或草稿。
