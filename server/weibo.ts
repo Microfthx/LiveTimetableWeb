@@ -168,7 +168,7 @@ function imageHost(hostname: string): boolean {
 function checkedImageUrl(raw: string): URL {
   let url: URL;
   try {
-    url = new URL(raw);
+    url = new URL(raw.startsWith("//") ? `https:${raw}` : raw);
   } catch {
     throw new WeiboError("WEIBO_IMAGE_FAILED", "微博图片地址无效。");
   }
@@ -181,6 +181,62 @@ function checkedImageUrl(raw: string): URL {
   if (url.protocol !== "https:")
     throw new WeiboError("WEIBO_IMAGE_FAILED", "微博图片地址协议无效。");
   return url;
+}
+
+function pictureUrls(item: unknown): string[] {
+  if (typeof item === "string")
+    return /^https?:\/\/|^\/\//.test(item) ? [item] : [];
+  if (!item || typeof item !== "object") return [];
+  const picture = item as Record<string, unknown>;
+  const urls = [
+    "large",
+    "original",
+    "largest",
+    "bmiddle",
+    "middle",
+    "thumbnail",
+    "url",
+  ]
+    .map((key) => {
+      const value = picture[key];
+      if (typeof value === "string") return value;
+      if (value && typeof value === "object") {
+        const nested = value as Record<string, unknown>;
+        return typeof nested.url === "string" ? nested.url : "";
+      }
+      return "";
+    })
+    .filter(Boolean);
+  return [...new Set(urls)];
+}
+
+export function postPictures(data: Record<string, unknown>): string[][] {
+  const info =
+    data.pic_infos &&
+    typeof data.pic_infos === "object" &&
+    !Array.isArray(data.pic_infos)
+      ? (data.pic_infos as Record<string, unknown>)
+      : {};
+  const ids = Array.isArray(data.pic_ids)
+    ? data.pic_ids.map(String)
+    : Object.keys(info);
+  const pics = Array.isArray(data.pics) ? data.pics : [];
+  const count = Math.max(pics.length, ids.length);
+  const pictures: string[][] = [];
+  for (let index = 0; index < count; index += 1) {
+    const item = pics[index];
+    const id =
+      typeof item === "string"
+        ? item
+        : (ids[index] ??
+          (item && typeof item === "object"
+            ? String((item as Record<string, unknown>).pid ?? "")
+            : ""));
+    pictures.push([
+      ...new Set([...pictureUrls(item), ...pictureUrls(info[id])]),
+    ]);
+  }
+  return pictures;
 }
 
 async function safeFetch(
@@ -372,12 +428,40 @@ export function createWeiboStore(
         /* Keep visible text when the long-text endpoint is unavailable. */
       }
     }
-    const pictureInfo = data.pic_infos as Record<string, unknown> | undefined;
-    const pictures = Array.isArray(data.pics)
-      ? data.pics
-      : Array.isArray(data.pic_ids) && pictureInfo
-        ? data.pic_ids.map((key) => pictureInfo[String(key)]).filter(Boolean)
-        : [];
+    let pictures = postPictures(data);
+    if (pictures.every((urls) => urls.length === 0)) {
+      try {
+        const alternate = await safeFetch(
+          new URL(
+            `https://weibo.com/ajax/statuses/show?id=${encodeURIComponent(id)}`,
+          ),
+          {
+            ...headers,
+            Referer: "https://weibo.com/",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          officialHost,
+          fetchFn,
+        );
+        if (
+          alternate.ok &&
+          !alternate.headers.get("content-type")?.includes("text/html")
+        ) {
+          const payload = (await alternate.json()) as Record<string, unknown>;
+          const detail = (payload.data ?? payload) as Record<string, unknown>;
+          if (
+            String(detail.idstr ?? detail.id ?? detail.mid) ===
+            String(data.idstr ?? data.id)
+          ) {
+            const alternatePictures = postPictures(detail);
+            if (alternatePictures.some((urls) => urls.length > 0))
+              pictures = alternatePictures;
+          }
+        }
+      } catch {
+        /* The mobile response remains usable when the optional image fallback fails. */
+      }
+    }
     const importId = randomUUID();
     const dir = safeDir(importId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -387,50 +471,64 @@ export function createWeiboStore(
       string,
       { filename: string; mime: string; width: number; height: number }
     > = {};
-    for (const [index, item] of pictures.entries()) {
-      const picture = item as Record<string, unknown>;
-      const large = picture.large as Record<string, unknown> | undefined;
-      const candidate = large?.url ?? picture.url;
-      if (typeof candidate !== "string") {
+    for (const [index, candidates] of pictures.entries()) {
+      if (candidates.length === 0) {
         warnings.push(`图 ${index + 1} 缺少图片地址。`);
         continue;
       }
-      try {
-        const imageUrl = checkedImageUrl(candidate);
-        const downloaded = await safeFetch(
-          imageUrl,
-          {
-            Referer: "https://m.weibo.cn/",
-            "User-Agent": headers["User-Agent"],
-          },
-          imageHost,
-          fetchFn,
-        );
-        if (!downloaded.ok) throw new Error("download failed");
-        const bytes = await limitedBytes(downloaded);
-        const info = checkedImage(bytes);
-        const imageId = `image_${String(index + 1).padStart(3, "0")}`;
-        const filename = `${imageId}.${info.extension}`;
-        await writeFile(join(dir, filename), bytes, {
-          flag: "wx",
-          mode: 0o600,
-        });
-        manifest[imageId] = {
-          filename,
-          mime: info.mime,
-          width: info.width,
-          height: info.height,
-        };
-        images.push({
-          id: imageId,
-          local_url: `/api/admin/weibo/import-assets/${importId}/${imageId}`,
-          width: info.width,
-          height: info.height,
-        });
-      } catch {
-        warnings.push(`图 ${index + 1} 下载失败，其他素材仍可使用。`);
+      let saved = false;
+      let reason = "下载失败";
+      for (const candidate of candidates) {
+        try {
+          const imageUrl = checkedImageUrl(candidate);
+          const downloaded = await safeFetch(
+            imageUrl,
+            {
+              Referer: "https://m.weibo.cn/",
+              "User-Agent": headers["User-Agent"],
+              Accept: "image/webp,image/png,image/jpeg,*/*;q=0.5",
+            },
+            imageHost,
+            fetchFn,
+          );
+          if (!downloaded.ok)
+            throw new WeiboError(
+              "WEIBO_IMAGE_FAILED",
+              `HTTP ${downloaded.status}`,
+            );
+          const bytes = await limitedBytes(downloaded);
+          const info = checkedImage(bytes);
+          const imageId = `image_${String(index + 1).padStart(3, "0")}`;
+          const filename = `${imageId}.${info.extension}`;
+          await writeFile(join(dir, filename), bytes, {
+            flag: "wx",
+            mode: 0o600,
+          });
+          manifest[imageId] = {
+            filename,
+            mime: info.mime,
+            width: info.width,
+            height: info.height,
+          };
+          images.push({
+            id: imageId,
+            local_url: `/api/admin/weibo/import-assets/${importId}/${imageId}`,
+            width: info.width,
+            height: info.height,
+          });
+          saved = true;
+          break;
+        } catch (cause) {
+          reason = cause instanceof WeiboError ? cause.message : "下载失败";
+        }
       }
+      if (!saved)
+        warnings.push(`图 ${index + 1} ${reason}，其他素材仍可使用。`);
     }
+    if (pictures.length === 0 && Number(data.pic_num) > 0)
+      warnings.push(
+        "微博表示含有图片，但详情接口未返回图片地址；请尝试本地上传图片。",
+      );
     await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest), {
       mode: 0o600,
     });

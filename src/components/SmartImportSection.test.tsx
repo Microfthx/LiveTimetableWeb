@@ -20,6 +20,31 @@ vi.mock("../utils/activitiesApi", () => ({
 afterEach(() => {
   cleanup();
   recognize.mockReset();
+  window.localStorage.clear();
+});
+
+it("remembers a Weibo Cookie only when selected and can clear it", async () => {
+  render(
+    <SmartImportSection
+      onPrepared={() => undefined}
+      onManual={() => undefined}
+      manualRequest={0}
+    />,
+  );
+  const cookie = screen.getByLabelText("微博 Cookie") as HTMLTextAreaElement;
+  fireEvent.change(cookie, { target: { value: "SUB=private==" } });
+  expect(window.localStorage.getItem("live-idol-weibo-cookie")).toBeNull();
+  fireEvent.click(screen.getByLabelText("在此浏览器记住 Cookie"));
+  await waitFor(() =>
+    expect(window.localStorage.getItem("live-idol-weibo-cookie")).toBe(
+      "SUB=private==",
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "清除已保存的 Cookie" }));
+  await waitFor(() =>
+    expect(window.localStorage.getItem("live-idol-weibo-cookie")).toBeNull(),
+  );
+  expect(cookie.value).toBe("");
 });
 
 it("allows timetable text without an image and reaches the existing preview path", async () => {

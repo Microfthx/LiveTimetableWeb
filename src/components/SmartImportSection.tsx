@@ -13,6 +13,16 @@ import { readPoster } from "../utils/poster";
 import { parseEventJsonDetailed } from "../utils/validation";
 import { OCR_PROMPT } from "../constants/ocrPrompt";
 
+const WEIBO_COOKIE_KEY = "live-idol-weibo-cookie";
+
+function savedWeiboCookie(): string {
+  try {
+    return window.localStorage.getItem(WEIBO_COOKIE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 interface ImportImage {
   id: string;
   url: string;
@@ -52,7 +62,10 @@ export function SmartImportSection({
 }) {
   const [sourceMode, setSourceMode] = useState<"weibo" | "upload">("weibo");
   const [showSources, setShowSources] = useState(true);
-  const [cookie, setCookie] = useState("");
+  const [cookie, setCookie] = useState(savedWeiboCookie);
+  const [rememberCookie, setRememberCookie] = useState(() =>
+    Boolean(savedWeiboCookie()),
+  );
   const [url, setUrl] = useState("");
   const [post, setPost] = useState<WeiboImportPost | null>(null);
   const [postText, setPostText] = useState("");
@@ -84,6 +97,16 @@ export function SmartImportSection({
       for (const blobUrl of localUrls.current) URL.revokeObjectURL(blobUrl);
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      if (rememberCookie && cookie.trim())
+        window.localStorage.setItem(WEIBO_COOKIE_KEY, cookie);
+      else window.localStorage.removeItem(WEIBO_COOKIE_KEY);
+    } catch {
+      /* Browser storage may be unavailable; the current input still works. */
+    }
+  }, [cookie, rememberCookie]);
 
   const byId = (id: string) => images.find((item) => item.id === id) ?? null;
   const timetable = byId(roles.timetable);
@@ -158,7 +181,9 @@ export function SmartImportSection({
       setRoles({ timetable: "", crop: "", cover: "" });
       setWarnings(fetched.warnings);
       setNotice(
-        `已获取微博正文和 ${fetched.images.length} 张图片。请选择图片角色。`,
+        fetched.images.length
+          ? `已获取微博正文和 ${fetched.images.length} 张图片。请选择图片角色。`
+          : "已获取微博正文，但未取得图片。如果原微博有图，请检查下方提示或改用本地上传。",
       );
     } catch (cause) {
       setError(
@@ -167,7 +192,7 @@ export function SmartImportSection({
           : "获取微博失败，请改用本地上传。",
       );
     } finally {
-      setCookie("");
+      if (!rememberCookie) setCookie("");
       setBusy(null);
       inFlight.current = false;
     }
@@ -394,7 +419,7 @@ export function SmartImportSection({
           {sourceMode === "weibo" ? (
             <div className="smart-fields">
               <label>
-                微博 Cookie（仅用于本次请求）
+                微博 Cookie
                 <textarea
                   value={cookie}
                   onChange={(event) => setCookie(event.target.value)}
@@ -403,6 +428,25 @@ export function SmartImportSection({
                   spellCheck={false}
                 />
               </label>
+              <label className="smart-cookie-choice">
+                <input
+                  type="checkbox"
+                  checked={rememberCookie}
+                  onChange={(event) => setRememberCookie(event.target.checked)}
+                />
+                在此浏览器记住 Cookie
+              </label>
+              {rememberCookie && (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setCookie("");
+                    setRememberCookie(false);
+                  }}
+                >
+                  清除已保存的 Cookie
+                </button>
+              )}
               <label>
                 单条微博链接
                 <input

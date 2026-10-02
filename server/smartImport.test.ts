@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { aiInputParts, recognizeEvent, EVENT_DATA_SCHEMA } from "./aiImport";
-import { createWeiboStore, parseCookieHeader, postIdFromUrl } from "./weibo";
+import {
+  createWeiboStore,
+  parseCookieHeader,
+  postIdFromUrl,
+  postPictures,
+} from "./weibo";
 
 const tinyPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==",
@@ -78,6 +83,88 @@ it("reads only the target post text and images into authenticated local assets",
         url.startsWith("https://m.weibo.cn/") || url.includes("sinaimg.cn"),
     ),
   ).toBe(true);
+});
+
+it("uses pic_ids when pics is empty and retries another size if the large image fails", async () => {
+  expect(
+    postPictures({
+      pics: [],
+      pic_ids: ["abc"],
+      pic_infos: {
+        abc: { large: { url: "https://wx1.sinaimg.cn/large/abc.jpg" } },
+      },
+    }),
+  ).toHaveLength(1);
+  const directory = await mkdtemp(join(tmpdir(), "smart-import-test-"));
+  folders.push(directory);
+  const visited: string[] = [];
+  const fakeFetch = (async (input: URL | RequestInfo) => {
+    const url = String(input);
+    visited.push(url);
+    if (url.includes("statuses/show"))
+      return new Response(
+        JSON.stringify({
+          ok: 1,
+          data: {
+            id: 1234567890123,
+            text: "14:00 Gara",
+            pic_ids: ["abc"],
+            pics: [],
+            pic_infos: {
+              abc: {
+                large: { url: "https://wx1.sinaimg.cn/large/abc.jpg" },
+                original: { url: "https://wx1.sinaimg.cn/original/abc.jpg" },
+              },
+            },
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url.includes("/large/")) return new Response(null, { status: 403 });
+    return new Response(tinyPng, { headers: { "Content-Type": "image/png" } });
+  }) as typeof fetch;
+  const store = createWeiboStore(directory, fakeFetch);
+  const post = await store.parse(
+    "https://m.weibo.cn/detail/1234567890123",
+    "SUB=secret",
+  );
+  expect(post.images).toHaveLength(1);
+  expect(post.warnings).toEqual([]);
+  expect(visited).toContain("https://wx1.sinaimg.cn/original/abc.jpg");
+});
+
+it("uses a matching desktop post for images when the mobile detail has none", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-import-test-"));
+  folders.push(directory);
+  const fakeFetch = (async (input: URL | RequestInfo) => {
+    const url = String(input);
+    if (url.includes("m.weibo.cn/api/statuses/show"))
+      return new Response(
+        JSON.stringify({
+          ok: 1,
+          data: { id: 1234567890123, text: "14:00 Gara", pics: [] },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url.includes("weibo.com/ajax/statuses/show"))
+      return new Response(
+        JSON.stringify({
+          id: 1234567890123,
+          pic_infos: {
+            abc: { large: { url: "https://wx1.sinaimg.cn/large/abc.png" } },
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    return new Response(tinyPng, { headers: { "Content-Type": "image/png" } });
+  }) as typeof fetch;
+  const store = createWeiboStore(directory, fakeFetch);
+  const post = await store.parse(
+    "https://m.weibo.cn/detail/1234567890123",
+    "SUB=secret",
+  );
+  expect(post.text).toBe("14:00 Gara");
+  expect(post.images).toHaveLength(1);
 });
 
 it("rejects redirects outside the official Weibo hosts", async () => {
