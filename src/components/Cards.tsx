@@ -384,8 +384,8 @@ export function TimetableList({
               <span className={`status-badge status-${mainStatus}`}>
                 {mainStatus === "finished" ? "演出结束"
                   : mainStatus === "live" ? "● 演出中"
-                  : mainStatus === "benefit" ? "平特中"
-                  : mainStatus === "benefit-ended" ? "平特结束"
+                  : mainStatus === "benefit" ? "特典中"
+                  : mainStatus === "benefit-ended" ? "特典结束"
                   : mainStatus === "next" ? "NEXT"
                   : mainStatus === "unscheduled" ? "待核对" : "UPCOMING"}
               </span>

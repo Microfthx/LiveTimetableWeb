@@ -61,7 +61,7 @@
 ## 时间语义
 
 - `start_time` / `end_time` 永远是海报上的原始排程，**不能因现场延迟而改写**。
-- 特典时间是独立的原始时段，不从演出时间推断；`delay_minutes` 仅调整演出时段，特典时间保持其明确标注的钟点。`benefit_status` 是网页根据当前时刻计算的 `upcoming` / `ongoing` / `ended` / `none`，不写入 OCR JSON 或数据库。列表只有一个主状态：普通特典进行中显示“平特中”，结束后显示“平特结束”；其余按演出进度显示 `UPCOMING`、`NEXT`、“演出中”或“演出结束”。
+- 特典时间是独立的原始时段，不从演出时间推断；`delay_minutes` 仅调整演出时段，特典时间保持其明确标注的钟点。`benefit_status` 是网页根据当前时刻计算的 `upcoming` / `ongoing` / `ended` / `none`，不写入 OCR JSON 或数据库。列表只有一个主状态：普通特典进行中显示“特典中”，结束后显示“特典结束”；其余按演出进度显示 `UPCOMING`、`NEXT`、“演出中”或“演出结束”。
 - 实际显示和状态判断使用 `effective_time = original_time + delay_minutes`。当前演出、下一组、进度、倒计时均依此计算。
 - 时间区间左闭右开：`effectiveStart <= now < effectiveEnd` 为 `LIVE`；结束时刻开始为 `FINISHED`。
 - 跨午夜时，以 `event.date + event.start_time` 为锚点。比活动开始钟点早的团体时间视为次日；例如活动 23:00 开始、团体 00:05 开始表示次日 00:05。`end_time` 早于 `start_time` 表示该组跨午夜；相等则无效。省略 `event.start_time` 时以当日 00:00 为锚点，因此跨午夜活动必须提供它。
