@@ -406,6 +406,8 @@ export function SmartImportSection({
     if (manualRequest > 0) void switchToManual();
   }, [manualRequest]);
 
+  const matchedBindings = pending ? exactGroupBindings(pending.groups, libraryGroups) : {};
+
   return (
     <section className="smart-import" aria-label="智能导入">
       <div className="smart-heading">
@@ -648,9 +650,9 @@ export function SmartImportSection({
       {pending && (
         <section className="smart-pending">
           <h3>人工检查 AI 识别结果</h3>
-          <details className="smart-group-matches"><summary>团体库精确匹配 · {Object.keys(exactGroupBindings(pending.groups, libraryGroups)).length}/{pending.groups.length}</summary>
-            <p className="sheet-description">仅标准名完全一致才自动绑定。请在导入预览核对头像、手动调整绑定，未匹配团体继续使用本场裁剪。</p>
-            <div>{pending.groups.map((group) => { const id = exactGroupBindings([group], libraryGroups)[group.id]; const matched = libraryGroups.find((entry) => entry.id === id); return <div className="smart-match-row" key={group.id}>{matched?.avatarUrl ? <img src={matched.avatarUrl} alt="" /> : <span>✦</span>}<strong>{group.name}</strong><small>{matched ? "✓ 已匹配团体库" : "未匹配 · 使用 AI crop"}</small></div>; })}</div>
+          <details className="smart-group-matches"><summary>团体库精确匹配 · {Object.keys(matchedBindings).length}/{pending.groups.length}</summary>
+            <p className="sheet-description">团体名会忽略简繁、英文大小写及首尾装饰性连字符后匹配。请在导入预览核对头像、手动调整绑定，未匹配团体继续使用本场裁剪。</p>
+            <div>{pending.groups.map((group) => { const matched = libraryGroups.find((entry) => entry.id === matchedBindings[group.id]); return <div className="smart-match-row" key={group.id}>{matched?.avatarUrl ? <img src={matched.avatarUrl} alt="" /> : <span>✦</span>}<strong>{group.name}</strong><small>{matched ? "✓ 已匹配团体库" : "未匹配 · 使用 AI crop"}</small></div>; })}</div>
           </details>
           <div className="smart-mode-tabs">
             <button

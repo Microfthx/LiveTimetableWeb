@@ -16,8 +16,16 @@ it("matches edge hyphens and ASCII casing while keeping event IDs separate", () 
   expect(exactGroupBindings([group("group_005", "token")], [{ ...entry, name: "Token" }])).toEqual({ group_005: "library-1" });
   expect(canonicalGroupName(" -Pri-Mary- ")).toBe("Pri-Mary");
   expect(groupMatchKey(" -TOKEN- ")).toBe("token");
+  expect(groupMatchKey("夢境契約")).toBe(groupMatchKey("梦境契约"));
+  expect(groupMatchKey("-電波TOXIC-")).toBe(groupMatchKey("电波toxic"));
+  expect(exactGroupBindings([group("group_007", "梦境契约")], [
+    { ...entry, name: "夢境契約" },
+  ])).toEqual({ group_007: "library-1" });
   expect(exactGroupBindings([group("group_006", "token")], [
     { ...entry, name: "Token" }, { ...entry, id: "library-2", name: "TOKEN" },
+  ])).toEqual({});
+  expect(exactGroupBindings([group("group_008", "梦境契约")], [
+    { ...entry, name: "夢境契約" }, { ...entry, id: "library-2", name: "梦境契约" },
   ])).toEqual({});
 });
 

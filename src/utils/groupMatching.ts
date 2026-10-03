@@ -1,14 +1,17 @@
 import type { GroupLibraryRecord, GroupBindings } from "../types/groupLibrary.js";
 import type { IdolGroup } from "../types/timetable.js";
+import OpenCC from "opencc-js/t2cn";
+
+const toSimplified: (text: string) => string = OpenCC.Converter({ from: "t", to: "cn" });
 
 /** Preserve display casing and internal hyphens; remove decorative edge hyphens. */
 export function canonicalGroupName(name: string): string {
   return name.normalize("NFC").trim().replace(/^-+|-+$/g, "").trim();
 }
 
-/** Strict identity match apart from edge hyphens and ASCII letter case. */
+/** Match the same written name across Chinese scripts and ASCII letter case. */
 export function groupMatchKey(name: string): string {
-  return canonicalGroupName(name).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return toSimplified(canonicalGroupName(name)).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /** Suggest a library name from a Weibo handle without changing event names. */

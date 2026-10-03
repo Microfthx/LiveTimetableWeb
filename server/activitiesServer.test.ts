@@ -178,6 +178,23 @@ it("keeps group avatars server-side, exact matches new events, and protects refe
   expect((await request(`/api/admin/activities/${activity.id}`, "DELETE")).status).toBe(200);
 });
 
+it("matches simplified and traditional group names without changing either display name", async () => {
+  const createdGroup = await request("/api/admin/groups", "POST", { name: "夢境契約" });
+  expect(createdGroup.status).toBe(201);
+  const libraryGroup = await createdGroup.json();
+  expect((await request("/api/admin/groups", "POST", { name: "梦境契约" })).status).toBe(409);
+  const data = { ...demoData, groups: demoData.groups.map((group, index) =>
+    index === 0 ? { ...group, name: "梦境契约" } : group) };
+  const createdActivity = await request("/api/admin/activities", "POST", { city: "上海", data });
+  expect(createdActivity.status).toBe(201);
+  const activity = await createdActivity.json();
+  expect(activity.groupBindings[data.groups[0].id]).toBe(libraryGroup.id);
+  expect(activity.data.groups[0].name).toBe("梦境契约");
+  expect((await (await request("/api/groups")).json()).find((group: { id: string }) => group.id === libraryGroup.id).name).toBe("夢境契約");
+  expect((await request(`/api/admin/activities/${activity.id}`, "DELETE")).status).toBe(200);
+  expect((await request(`/api/admin/groups/${libraryGroup.id}`, "DELETE")).status).toBe(200);
+});
+
 it("keeps the migrated event after restart and invalidates logout cookie", async () => {
   const saved = JSON.parse(await readFile(join(directory, "activities.json"), "utf8"));
   expect(saved).toHaveLength(1);
