@@ -1384,7 +1384,7 @@ p {
   display: grid;
   gap: 5px;
   margin-top: 10px;
-  max-height: 230px;
+  max-height: min(45vh, 360px);
   overflow: auto;
 }
 .preview-group {
@@ -1407,7 +1407,7 @@ p {
 .preview-group .group-image-placeholder span {
   font-size: 9px;
 }
-.preview-group div:last-child {
+.preview-group > div:last-child {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1423,7 +1423,21 @@ p {
   color: #758aa1;
 }
 .group-binding-controls { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; margin-top: 4px; }
-.group-binding-controls select { max-width: 100%; min-height: 34px; padding: 3px 7px; border: 1px solid #c6e7e7; border-radius: 8px; background: #fff; color: #29465b; font-size: 11px; }
+.group-binding-picker { position: relative; width: min(100%, 260px); min-width: 0; }
+.group-binding-trigger { display: flex; align-items: center; justify-content: space-between; gap: 5px; width: 100%; min-height: 44px; padding: 5px 8px; border: 1px solid #c6e7e7; border-radius: 8px; background: #fff; color: #29465b; font-size: 11px; text-align: left; }
+.group-binding-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-binding-trigger svg { flex: none; }
+.group-binding-menu { width: 100%; padding: 6px; border: 1px solid #c6e7e7; border-radius: 10px; background: #fff; box-shadow: 0 5px 15px #1848581a; }
+.group-binding-search { display: flex; align-items: center; gap: 5px; min-height: 38px; padding: 0 8px; border: 1px solid #b9d9df; border-radius: 8px; color: #58738a; }
+.group-binding-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #29465b; font: inherit; font-size: 12px; }
+.group-binding-search:focus-within { border-color: #0ba6b8; box-shadow: 0 0 0 2px #0ba6b820; }
+.group-binding-options { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; padding-top: 4px; }
+.group-binding-options button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 42px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: #29465b; font-size: 11px; text-align: left; }
+.group-binding-options button:hover, .group-binding-options button:focus-visible, .group-binding-options button.selected { background: #e8f9f7; }
+.group-binding-options button img, .group-binding-avatar-placeholder { width: 28px; height: 28px; flex: none; border-radius: 5px; object-fit: cover; background: #dff5f4; text-align: center; line-height: 28px; }
+.group-binding-options button > span:not(.group-binding-avatar-placeholder) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.group-binding-options button small { flex: none; color: #668095; }
+.group-binding-options p { padding: 8px 5px; color: #668095; font-size: 11px; }
 .group-binding-controls .text-button { width: fit-content; min-height: 28px; padding: 2px 6px; font-size: 11px; }
 .group-binding-status { color: #0e8889 !important; font-weight: 700; }
 .poster-overlay {

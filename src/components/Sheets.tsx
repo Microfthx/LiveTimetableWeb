@@ -28,6 +28,7 @@ import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSectio
 import { AiCropDebugPanel } from "./AiCropDebugPanel";
 import type { AiCropDebugData } from "../types/aiCropDebug";
 import { EventDataVisualEditor } from "./EventDataVisualEditor";
+import { GroupBindingPicker } from "./GroupBindingPicker";
 
 export function Sheet({
   title,
@@ -749,11 +750,11 @@ export function ImportBottomSheet({
                         : "时间待核对"}</small>
                     )}
                     <div className="group-binding-controls">
-                      <select aria-label={`${group.name} 的团体库绑定`} value={bindings[group.id] ?? ""} disabled={!!groupBusy || processing}
-                        onChange={(event) => { setBindingOverrides((previous) => ({ ...previous, [group.id]: event.target.value || null })); onDirtyChange?.(true); }}>
-                        <option value="">未绑定 · 使用本场 crop</option>
-                        {library.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.avatarUrl ? " · 有头像" : " · 无头像"}</option>)}
-                      </select>
+                      <GroupBindingPicker groupName={group.name} value={bindings[group.id] ?? ""} library={library}
+                        disabled={!!groupBusy || processing} onChange={(id) => {
+                          setBindingOverrides((previous) => ({ ...previous, [group.id]: id || null }));
+                          onDirtyChange?.(true);
+                        }} />
                       {bindings[group.id] ? <small className="group-binding-status">✓ 已匹配团体库</small>
                         : <button type="button" className="text-button" disabled={!!groupBusy || processing} onClick={() => void addToLibrary(group)}>{groupBusy === group.id ? "保存中…" : "+ 加入团体库"}</button>}
                     </div>
