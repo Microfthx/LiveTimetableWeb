@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import type { EventData, PosterSource } from "../types/timetable";
+import type { GroupBindings, GroupLibraryRecord } from "../types/groupLibrary";
 import { OCR_PROMPT } from "../constants/ocrPrompt";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { parseEventJsonDetailed } from "../utils/validation";
@@ -20,7 +21,9 @@ import {
   revokeRuntimeImages,
   type RuntimeGroupImages,
 } from "../utils/poster";
-import { GroupImage, RuntimeImageContext } from "./GroupImage";
+import { GroupImage, LibraryImageContext, RuntimeImageContext } from "./GroupImage";
+import { createGroup, listGroups } from "../utils/activitiesApi";
+import { exactGroupBindings } from "../utils/groupMatching";
 import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSection";
 import { AiCropDebugPanel } from "./AiCropDebugPanel";
 import type { AiCropDebugData } from "../types/aiCropDebug";
@@ -177,6 +180,7 @@ export function ImportBottomSheet({
   poster,
   initialData,
   initialCity = "",
+  initialBindings = {},
   sheetTitle = "导入 Timetable",
   submitLabel = "确认导入",
   duplicateTitles = [],
@@ -197,6 +201,7 @@ export function ImportBottomSheet({
   poster: PosterSource | null;
   initialData?: EventData;
   initialCity?: string;
+  initialBindings?: GroupBindings;
   sheetTitle?: string;
   submitLabel?: string;
   duplicateTitles?: string[];
@@ -210,7 +215,7 @@ export function ImportBottomSheet({
   onPosterSelect: (poster: PosterSource) => void;
   onPosterClear: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onImport: (data: EventData, images: RuntimeGroupImages, poster: PosterSource | null, city: string) => Promise<void>;
+  onImport: (data: EventData, images: RuntimeGroupImages, poster: PosterSource | null, city: string, groupBindings: GroupBindings) => Promise<void>;
   onClose: () => void;
 }) {
   const [text, setText] = useState(() => initialData ? JSON.stringify(initialData, null, 2) : "");
@@ -231,6 +236,10 @@ export function ImportBottomSheet({
     images: RuntimeGroupImages;
     failed: string[];
   }>({ images: {}, failed: [] });
+  const [library, setLibrary] = useState<GroupLibraryRecord[]>([]);
+  const [libraryReady, setLibraryReady] = useState(false);
+  const [bindingOverrides, setBindingOverrides] = useState<Record<string, string | null>>({});
+  const [groupBusy, setGroupBusy] = useState("");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
@@ -242,10 +251,22 @@ export function ImportBottomSheet({
   const previewUrlsRef = useRef<RuntimeGroupImages>({});
   const confirmingRef = useRef(false);
 
+  useEffect(() => { void listGroups().then(setLibrary).catch(() => setError("团体库暂时无法读取，未匹配团体仍可使用本场裁剪。"))
+    .finally(() => setLibraryReady(true)); }, []);
+  const automaticBindings = candidate ? exactGroupBindings(candidate.data.groups, library) : {};
+  const bindings: GroupBindings = Object.fromEntries(Object.entries({ ...automaticBindings, ...initialBindings, ...bindingOverrides })
+    .filter((entry): entry is [string, string] => !!entry[1] && !!candidate?.data.groups.some((group) => group.id === entry[0]) && !!library.find((group) => group.id === entry[1])));
+  const libraryImages: RuntimeGroupImages = Object.fromEntries(Object.entries(bindings).flatMap(([eventId, libraryId]) => {
+    const url = library.find((group) => group.id === libraryId)?.avatarUrl;
+    return url ? [[eventId, url]] : [];
+  }));
+  const skipCropIds = Object.keys(libraryImages).sort().join(",");
+
   useEffect(() => {
     if (mode === "file") fileRef.current?.click();
   }, [mode]);
   useEffect(() => {
+    if (!libraryReady) { setProcessing(!!candidate && !!poster); return; }
     if (!candidate || !poster) {
       setPreview({ images: {}, failed: [] });
       setProcessing(false);
@@ -256,7 +277,7 @@ export function ImportBottomSheet({
     setProgress({ done: 0, total: candidate.data.groups.length });
     cropGroupImages(candidate.data, poster, (done, total) => {
       if (!cancelled) setProgress({ done, total });
-    })
+    }, new Set(skipCropIds ? skipCropIds.split(",") : []))
       .then((result) => {
         if (cancelled) {
           revokeRuntimeImages(result.images);
@@ -284,11 +305,12 @@ export function ImportBottomSheet({
       revokeRuntimeImages(previewUrlsRef.current);
       previewUrlsRef.current = {};
     };
-  }, [candidate, poster]);
+  }, [candidate, poster, skipCropIds, libraryReady]);
 
   const parse = (value = text) => {
     try {
       const parsed = parseEventJsonDetailed(value);
+      setBindingOverrides({});
       setPreview({ images: {}, failed: [] });
       setProcessing(!!poster);
       setCandidate(parsed);
@@ -303,6 +325,7 @@ export function ImportBottomSheet({
     }
   };
   const prepareSmart = (data: EventData, recognizedCity: string, crop: PosterSource | null, cover: PosterSource | null, summary: SmartSourceSummary) => {
+    setBindingOverrides({});
     setText(JSON.stringify(data, null, 2));
     setCandidate(parseEventJsonDetailed(JSON.stringify(data)));
     setVisualDraft(data);
@@ -398,12 +421,12 @@ export function ImportBottomSheet({
     }
   };
   const confirm = async () => {
-    if (!candidate || processing || confirmingRef.current) return;
+    if (!candidate || !libraryReady || processing || confirmingRef.current) return;
     if (!city.trim()) { setError("请填写活动城市。"); return; }
     confirmingRef.current = true;
     setProcessing(true);
     try {
-      await onImport(candidate.data, preview.images, poster, city.trim());
+      await onImport(candidate.data, preview.images, poster, city.trim(), bindings);
       onClose();
     } catch (cause) {
       setError(
@@ -413,6 +436,31 @@ export function ImportBottomSheet({
       confirmingRef.current = false;
       setProcessing(false);
     }
+  };
+  const addToLibrary = async (group: EventData["groups"][number]) => {
+    if (groupBusy || !candidate) return;
+    if (!window.confirm(`将「${group.name}」和当前裁剪头像加入团体库？请先确认名称与图片。`)) return;
+    setGroupBusy(group.id);
+    setError("");
+    try {
+      let avatarDataUrl: string | undefined;
+      const croppedUrl = preview.images[group.id];
+      if (croppedUrl) {
+        const blob = await (await fetch(croppedUrl)).blob();
+        avatarDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("裁剪头像读取失败。"));
+          reader.readAsDataURL(blob);
+        });
+      }
+      const saved = await createGroup({ name: group.name, ...(avatarDataUrl ? { avatarDataUrl } : {}) });
+      setLibrary((previous) => [...previous, saved]);
+      setBindingOverrides((previous) => ({ ...previous, [group.id]: saved.id }));
+      setToast(`${group.name} 已加入团体库并绑定`);
+      onDirtyChange?.(true);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "加入团体库失败。"); }
+    finally { setGroupBusy(""); }
   };
   const download = () => {
     if (!candidate) return;
@@ -449,7 +497,7 @@ export function ImportBottomSheet({
         onChange={(event) => { cityEditedRef.current = !!event.target.value.trim(); setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
       {showDisplayPosterEditor && <div className="cover-editor"><strong>活动列表封面</strong>{displayPoster && <img src={displayPoster.url} alt="当前活动列表封面" />}<button className="secondary-button" disabled={processing} onClick={() => displayPosterFileRef.current?.click()}>更换活动封面</button>{coverReplacementPending && <p className="form-warning">新活动封面尚未保存。</p>}<input ref={displayPosterFileRef} type="file" className="visually-hidden" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPoster(file).then((source) => { onDisplayPosterSelect?.(source); onDirtyChange?.(true); setError(""); }).catch((cause) => setError(cause instanceof Error ? cause.message : "封面读取失败。")); event.target.value = ""; }} /></div>}
       {smartEnabled && <div className="smart-mode-tabs import-mode-tabs"><button className={importMode === "smart" ? "selected" : ""} onClick={() => setImportMode("smart")}>智能导入</button><button className={importMode === "manual" ? "selected" : ""} onClick={() => { if (importMode === "smart") setManualRequest((value) => value + 1); }}>手动 JSON</button></div>}
-      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onCityRecognized={(recognizedCity) => { if (!cityEditedRef.current) setCity(recognizedCity); }} onDebug={(debug, original) => { setAiCropDebug(debug); setDebugOriginal(original); }} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
+      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection libraryGroups={library} onPrepared={prepareSmart} onCityRecognized={(recognizedCity) => { if (!cityEditedRef.current) setCity(recognizedCity); }} onDebug={(debug, original) => { setAiCropDebug(debug); setDebugOriginal(original); }} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
       <div hidden={importMode !== "manual"}>
       {initialData && <div className="smart-mode-tabs" role="tablist" aria-label="活动编辑方式">
         <button role="tab" aria-selected={editTab === "json"} className={editTab === "json" ? "selected" : ""} onClick={() => setEditTab("json")}>JSON 编辑</button>
@@ -647,6 +695,7 @@ export function ImportBottomSheet({
           </div>
           <div className="preview-stats">
             <span>{data.groups.length} 个团体</span>
+            <span>{Object.keys(bindings).length} 个团体库匹配</span>
             <span>{generatedCount} 个裁剪图片</span>
             <span>{noCropCount} 个无 crop</span>
             <span>{preview.failed.length} 个裁剪失败</span>
@@ -681,7 +730,7 @@ export function ImportBottomSheet({
               {name} 的图片裁剪失败，将使用默认图片。
             </p>
           ))}
-          <RuntimeImageContext.Provider value={preview.images}>
+          <LibraryImageContext.Provider value={libraryImages}><RuntimeImageContext.Provider value={preview.images}>
             <div className="preview-groups">
               {data.groups.map((group) => (
                 <div className="preview-group" key={group.id}>
@@ -699,11 +748,20 @@ export function ImportBottomSheet({
                         ? `${group.benefit_time_start}–${group.benefit_time_end}`
                         : "时间待核对"}</small>
                     )}
+                    <div className="group-binding-controls">
+                      <select aria-label={`${group.name} 的团体库绑定`} value={bindings[group.id] ?? ""} disabled={!!groupBusy || processing}
+                        onChange={(event) => { setBindingOverrides((previous) => ({ ...previous, [group.id]: event.target.value || null })); onDirtyChange?.(true); }}>
+                        <option value="">未绑定 · 使用本场 crop</option>
+                        {library.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.avatarUrl ? " · 有头像" : " · 无头像"}</option>)}
+                      </select>
+                      {bindings[group.id] ? <small className="group-binding-status">✓ 已匹配团体库</small>
+                        : <button type="button" className="text-button" disabled={!!groupBusy || processing} onClick={() => void addToLibrary(group)}>{groupBusy === group.id ? "保存中…" : "+ 加入团体库"}</button>}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
-          </RuntimeImageContext.Provider>
+          </RuntimeImageContext.Provider></LibraryImageContext.Provider>
           {aiCropDebug && <AiCropDebugPanel debug={aiCropDebug} original={poster} originalAtRequest={debugOriginal} data={data} images={preview.images} />}
           {poster && (
             <details className="crop-overlay-details">
@@ -748,7 +806,7 @@ export function ImportBottomSheet({
       <button
         className="primary-button"
         onClick={() => void confirm()}
-        disabled={!data || !city.trim() || processing}
+        disabled={!data || !city.trim() || processing || !libraryReady || !!groupBusy}
       >
         {processing ? "处理中…" : submitLabel}
       </button>

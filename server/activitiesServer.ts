@@ -1,14 +1,16 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { imageSize } from "image-size";
 import sharp from "sharp";
 import type { ActivityRecord } from "../src/types/activity.js";
+import type { GroupBindings, GroupLibraryRecord } from "../src/types/groupLibrary.js";
+import { canonicalGroupName, exactGroupBindings } from "../src/utils/groupMatching.js";
 import { validateEventData } from "../src/utils/validation.js";
 import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
-import { createWeiboStore, WeiboError } from "./weibo.js";
+import { createWeiboStore, fetchWeiboGroupProfile, profileUidFromUrl, WeiboError } from "./weibo.js";
 
 const MAX_BODY_BYTES = 80 * 1024 * 1024;
 const MAX_POSTER_BYTES = 25 * 1024 * 1024;
@@ -19,6 +21,10 @@ const ID_PATTERN = "[a-f0-9-]{36}";
 interface StoredActivity extends Omit<ActivityRecord, "posterUrl" | "cropSourceUrl" | "cropSourceSeparate"> {
   posterFilename?: string;
   cropSourceFilename?: string;
+}
+
+interface StoredGroup extends Omit<GroupLibraryRecord, "avatarUrl" | "boundActivityCount"> {
+  avatarFilename?: string;
 }
 
 class HttpError extends Error {
@@ -186,6 +192,25 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     }
   })();
 
+  const groupsPath = join(dataDir, "groups.json");
+  const groupsDir = join(dataDir, "groups");
+  let library: StoredGroup[] = [];
+  try {
+    const saved = JSON.parse(await readFile(groupsPath, "utf8"));
+    if (!Array.isArray(saved)) throw new Error("Invalid groups.json");
+    library = saved.map((item: unknown) => {
+      const raw = object(item);
+      if (typeof raw.id !== "string" || !new RegExp(`^${ID_PATTERN}$`).test(raw.id)
+        || typeof raw.name !== "string" || !canonicalGroupName(raw.name)
+        || typeof raw.createdAt !== "string" || typeof raw.updatedAt !== "string"
+        || (raw.avatarFilename !== undefined && (typeof raw.avatarFilename !== "string" || !/^[a-f0-9-]{36}\.webp$/.test(raw.avatarFilename))))
+        throw new Error("Invalid stored group");
+      return raw as unknown as StoredGroup;
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
   let queue: Promise<unknown> = Promise.resolve();
   function exclusive<T>(action: () => Promise<T>): Promise<T> {
     const result = queue.then(action);
@@ -197,6 +222,62 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     await writeFile(temporary, JSON.stringify(next));
     await rename(temporary, storePath);
     activities = next;
+  }
+  async function saveGroups(next: StoredGroup[]) {
+    const temporary = join(dataDir, `groups-${process.pid}-${randomUUID()}.tmp`);
+    await writeFile(temporary, JSON.stringify(next));
+    await rename(temporary, groupsPath);
+    library = next;
+  }
+  const boundActivityCount = (id: string) => activities.filter((item) => Object.values(item.groupBindings ?? {}).includes(id)).length;
+  function publicGroup(group: StoredGroup): GroupLibraryRecord {
+    const { avatarFilename: _avatarFilename, ...rest } = group;
+    void _avatarFilename;
+    return { ...rest,
+      ...(group.avatarFilename ? { avatarUrl: `/api/groups/${group.id}/avatar?v=${group.avatarFilename.slice(0, 36)}` } : {}),
+      boundActivityCount: boundActivityCount(group.id),
+    };
+  }
+  function groupFields(input: Record<string, unknown>, currentId?: string) {
+    const name = typeof input.name === "string" ? canonicalGroupName(input.name) : "";
+    if (!name || name.length > 120) throw new HttpError(400, "团体名称不能为空，且不能超过 120 个字符。");
+    if (library.some((group) => group.id !== currentId && canonicalGroupName(group.name) === name))
+      throw new HttpError(409, "团体库中已存在同名团体。");
+    let weiboUid = typeof input.weiboUid === "string" ? input.weiboUid.trim() : "";
+    const weiboUrl = typeof input.weiboUrl === "string" ? input.weiboUrl.trim() : "";
+    if (weiboUrl && !weiboUid) weiboUid = profileUidFromUrl(weiboUrl);
+    if (weiboUid && !/^\d{5,20}$/.test(weiboUid)) throw new HttpError(400, "微博 UID 格式无效。");
+    if (weiboUrl && profileUidFromUrl(weiboUrl) !== weiboUid)
+      throw new HttpError(400, "微博主页链接与 UID 不一致。");
+    if (library.some((group) => group.id !== currentId && weiboUid && group.weiboUid === weiboUid))
+      throw new HttpError(409, "该微博 UID 已绑定其他团体。");
+    const avatarSourceUrl = typeof input.avatarSourceUrl === "string" ? input.avatarSourceUrl.trim().slice(0, 2048) : "";
+    return { name, ...(weiboUid ? { weiboUid } : {}), ...(weiboUrl ? { weiboUrl } : {}),
+      ...(avatarSourceUrl ? { avatarSourceUrl } : {}) };
+  }
+  async function avatarBytes(value: unknown): Promise<Buffer | null> {
+    if (value === undefined || value === null) return null;
+    const source = posterFrom(value);
+    try { return await sharp(source.bytes).rotate().resize(512, 512, { fit: "inside", withoutEnlargement: true }).webp({ quality: 85 }).toBuffer(); }
+    catch { throw new HttpError(400, "头像无法处理，请上传有效的 JPG、PNG 或 WebP 图片。"); }
+  }
+  async function writeAvatar(id: string, bytes: Buffer): Promise<string> {
+    const filename = `${randomUUID()}.webp`;
+    await mkdir(join(groupsDir, id), { recursive: true });
+    await writeFile(join(groupsDir, id, filename), bytes, { flag: "wx" });
+    return filename;
+  }
+  function checkedBindings(value: unknown, data: ActivityRecord["data"]): GroupBindings {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "团体绑定格式无效。");
+    const validIds = new Set(data.groups.map((group) => group.id));
+    const validGroups = new Set(library.map((group) => group.id));
+    const result: GroupBindings = {};
+    for (const [eventId, libraryId] of Object.entries(value)) {
+      if (!validIds.has(eventId) || typeof libraryId !== "string" || !validGroups.has(libraryId))
+        throw new HttpError(400, "团体绑定包含无效的活动团体或团体库 ID。");
+      result[eventId] = libraryId;
+    }
+    return result;
   }
   const signature = (value: string) => createHmac("sha256", adminSessionSecret).update(value).digest("base64url");
   const revoked = new Set<string>();
@@ -297,6 +378,16 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
       const method = request.method ?? "GET";
       if (method === "GET" && path === "/api/health") { sendJson(response, 200, { ok: true, activities: activities.length }); return; }
       if (method === "GET" && path === "/api/activities") { sendJson(response, 200, activities.map(publicActivity)); return; }
+      if (method === "GET" && path === "/api/groups") {
+        sendJson(response, 200, library.map(publicGroup).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"))); return;
+      }
+      const groupAvatarPath = new RegExp(`^/api/groups/(${ID_PATTERN})/avatar$`).exec(path);
+      if (method === "GET" && groupAvatarPath) {
+        const group = library.find((item) => item.id === groupAvatarPath[1]);
+        if (!group?.avatarFilename) throw new HttpError(404, "团体头像不存在。");
+        await streamImage(response, join(groupsDir, group.id, group.avatarFilename), "image/webp", true);
+        return;
+      }
       const activityPath = new RegExp(`^/api/activities/(${ID_PATTERN})$`).exec(path);
       if (method === "GET" && activityPath) {
         const activity = activities.find((item) => item.id === activityPath[1]);
@@ -408,15 +499,69 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         sendJson(response, 200, result);
         return;
       }
+      if (method === "POST" && path === "/api/admin/groups/weibo-profile") {
+        limitImport(request, "weibo");
+        const input = await readJson(request);
+        if (typeof input.url !== "string" || typeof input.cookie !== "string") throw new HttpError(400, "请输入微博主页链接和 Cookie。");
+        sendJson(response, 200, await fetchWeiboGroupProfile(input.url, input.cookie));
+        return;
+      }
+      if (method === "POST" && path === "/api/admin/groups") {
+        const input = await readJson(request);
+        const bytes = await avatarBytes(input.avatarDataUrl);
+        const result = await exclusive(async () => {
+          const fields = groupFields(input);
+          const id = randomUUID();
+          const now = new Date().toISOString();
+          const avatarFilename = bytes ? await writeAvatar(id, bytes) : undefined;
+          const group: StoredGroup = { id, ...fields, createdAt: now, updatedAt: now, ...(avatarFilename ? { avatarFilename } : {}) };
+          try { await saveGroups([...library, group]); }
+          catch (error) { if (avatarFilename) await rm(join(groupsDir, id), { recursive: true, force: true }); throw error; }
+          return publicGroup(group);
+        });
+        sendJson(response, 201, result); return;
+      }
+      const adminGroupPath = new RegExp(`^/api/admin/groups/(${ID_PATTERN})$`).exec(path);
+      if (method === "PATCH" && adminGroupPath) {
+        const input = await readJson(request);
+        const bytes = await avatarBytes(input.avatarDataUrl);
+        const result = await exclusive(async () => {
+          const old = library.find((item) => item.id === adminGroupPath[1]);
+          if (!old) throw new HttpError(404, "团体不存在或已被删除。");
+          const fields = groupFields(input, old.id);
+          const avatarFilename = bytes ? await writeAvatar(old.id, bytes) : input.avatarDataUrl === null ? undefined : old.avatarFilename;
+          const next: StoredGroup = { id: old.id, ...fields, createdAt: old.createdAt, updatedAt: new Date().toISOString(), ...(avatarFilename ? { avatarFilename } : {}) };
+          try { await saveGroups(library.map((item) => item.id === old.id ? next : item)); }
+          catch (error) { if (bytes && avatarFilename) await unlink(join(groupsDir, old.id, avatarFilename)); throw error; }
+          if (old.avatarFilename && old.avatarFilename !== avatarFilename)
+            await unlink(join(groupsDir, old.id, old.avatarFilename)).catch((error) => console.error("Old group avatar cleanup failed", error));
+          return publicGroup(next);
+        });
+        sendJson(response, 200, result); return;
+      }
+      if (method === "DELETE" && adminGroupPath) {
+        await exclusive(async () => {
+          const old = library.find((item) => item.id === adminGroupPath[1]);
+          if (!old) throw new HttpError(404, "团体不存在或已被删除。");
+          const count = boundActivityCount(old.id);
+          if (count) throw new HttpError(409, `该团体已被 ${count} 场活动引用，请先解除绑定。`);
+          await saveGroups(library.filter((item) => item.id !== old.id));
+          await rm(join(groupsDir, old.id), { recursive: true, force: true }).catch((error) => console.error("Group avatar cleanup failed", error));
+        });
+        sendJson(response, 200, { ok: true }); return;
+      }
       if (method === "POST" && path === "/api/admin/activities") {
         const input = await readJson(request);
         const city = cityFrom(input.city);
         const data = checkedEvent(input.data);
         const result = await exclusive(async () => {
+          const groupBindings = input.groupBindings === undefined
+            ? exactGroupBindings(data.groups, library.map(publicGroup))
+            : checkedBindings(input.groupBindings, data);
           const id = randomUUID();
           const now = new Date().toISOString();
           const assets = await writeActivityImages(id, input);
-          const activity: StoredActivity = { id, city, data, createdAt: now, updatedAt: now, ...assets };
+          const activity: StoredActivity = { id, city, data, groupBindings, createdAt: now, updatedAt: now, ...assets };
           try { await save([...activities, activity]); }
           catch (error) { await removeUnreferenced(activity); throw error; }
           return publicActivity(activity);
@@ -431,8 +576,11 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         const result = await exclusive(async () => {
           const old = activities.find((item) => item.id === adminActivityPath[1]);
           if (!old) throw new HttpError(404, "活动不存在或已被删除。");
+          const groupBindings = input.groupBindings === undefined
+            ? Object.fromEntries(Object.entries(old.groupBindings ?? {}).filter(([eventId]) => data.groups.some((group) => group.id === eventId)))
+            : checkedBindings(input.groupBindings, data);
           const assets = await writeActivityImages(old.id, input);
-          const next = { ...old, city, data, updatedAt: new Date().toISOString(),
+          const next = { ...old, city, data, groupBindings, updatedAt: new Date().toISOString(),
             ...(assets.posterFilename ? { posterFilename: assets.posterFilename, images: {} } : {}),
             ...(assets.cropSourceFilename ? { cropSourceFilename: assets.cropSourceFilename, images: {} }
               : assets.posterFilename && old.cropSourceFilename === old.posterFilename

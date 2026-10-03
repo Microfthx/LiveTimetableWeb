@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CalendarDays, Home, Settings2 } from "lucide-react";
 import { DelayBottomSheet, Sheet } from "../components/Sheets";
 import { DelayControl, Header, NextUpCard, NowPlayingCard, TimetableList } from "../components/Cards";
-import { RuntimeImageContext } from "../components/GroupImage";
+import { LibraryImageContext, RuntimeImageContext } from "../components/GroupImage";
 import type { ActivityRecord } from "../types/activity";
 import { useCurrentTime } from "../hooks/useCurrentTime";
-import { getActivity } from "../utils/activitiesApi";
+import { getActivity, listGroups } from "../utils/activitiesApi";
 import { cropGroupImages, readPoster, revokeRuntimeImages, type RuntimeGroupImages } from "../utils/poster";
 import { getCurrentPerformance, getNextPerformance } from "../utils/time";
 
@@ -25,6 +25,7 @@ export function EventDetailPage({ id }: { id: string }) {
   const [retry, setRetry] = useState(0);
   const [delay, setDelay] = useState(0);
   const [images, setImages] = useState<RuntimeGroupImages>({});
+  const [libraryImages, setLibraryImages] = useState<RuntimeGroupImages>({});
   const [sheet, setSheet] = useState<"delay" | "settings" | null>(null);
   const now = useCurrentTime();
   const topRef = useRef<HTMLDivElement>(null);
@@ -32,9 +33,13 @@ export function EventDetailPage({ id }: { id: string }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getActivity(id).then((activity) => {
+    Promise.all([getActivity(id), listGroups().catch(() => [])]).then(([activity, groups]) => {
       if (!active) return;
       setRecord(activity);
+      setLibraryImages(Object.fromEntries(Object.entries(activity.groupBindings ?? {}).flatMap(([eventGroupId, libraryId]) => {
+        const avatar = groups.find((group) => group.id === libraryId)?.avatarUrl;
+        return avatar ? [[eventGroupId, avatar]] : [];
+      })));
       setDelay(localDelay(id, activity.data.delay_minutes));
       setError("");
       setLoading(false);
@@ -55,7 +60,8 @@ export function EventDetailPage({ id }: { id: string }) {
     let generated: RuntimeGroupImages = {};
     setImages(record.images ?? {});
     const cropUrl = record.cropSourceUrl ?? record.posterUrl;
-    if (cropUrl) {
+    const unboundCrops = record.data.groups.some((group) => !libraryImages[group.id] && !!group.crop?.width && !!group.crop.height);
+    if (cropUrl && unboundCrops) {
       (async () => {
         try {
           const response = await fetch(cropUrl, { cache: "no-store" });
@@ -65,7 +71,7 @@ export function EventDetailPage({ id }: { id: string }) {
           const source = await readPoster(file);
           sourceUrl = source.url;
           if (!active) { URL.revokeObjectURL(sourceUrl); sourceUrl = ""; return; }
-          const cropped = await cropGroupImages(record.data, source);
+          const cropped = await cropGroupImages(record.data, source, undefined, new Set(Object.keys(libraryImages)));
           generated = cropped.images;
           if (active) setImages({ ...(record.images ?? {}), ...generated });
           else revokeRuntimeImages(generated);
@@ -77,7 +83,7 @@ export function EventDetailPage({ id }: { id: string }) {
       revokeRuntimeImages(generated);
       if (sourceUrl) URL.revokeObjectURL(sourceUrl);
     };
-  }, [record]);
+  }, [record, libraryImages]);
 
   const data = useMemo(() => record ? { ...record.data, delay_minutes: delay } : null, [record, delay]);
   const current = data ? getCurrentPerformance(data, now) : undefined;
@@ -91,7 +97,7 @@ export function EventDetailPage({ id }: { id: string }) {
   if (!record || !data) return <div className="sync-screen"><h1>{error}</h1><a className="primary-button" href="/">返回活动列表</a><button className="text-button" onClick={() => setRetry((value) => value + 1)}>重试</button></div>;
   const scrollToTimetable = () => document.getElementById("timetable")?.scrollIntoView({ behavior: "smooth", block: "start" });
   return (
-    <RuntimeImageContext.Provider value={images}>
+    <LibraryImageContext.Provider value={libraryImages}><RuntimeImageContext.Provider value={images}>
       <div className="page-shell" ref={topRef}>
         <a className="detail-back" href="/"><ArrowLeft size={18} /> 返回活动列表</a>
         <Header data={data} onSettings={() => setSheet("settings")} />
@@ -114,6 +120,6 @@ export function EventDetailPage({ id }: { id: string }) {
           <a className="text-button" href="/admin">管理入口</a>
         </Sheet>}
       </div>
-    </RuntimeImageContext.Provider>
+    </RuntimeImageContext.Provider></LibraryImageContext.Provider>
   );
 }

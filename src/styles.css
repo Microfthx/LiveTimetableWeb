@@ -1422,6 +1422,10 @@ p {
   font-size: 11px;
   color: #758aa1;
 }
+.group-binding-controls { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; margin-top: 4px; }
+.group-binding-controls select { max-width: 100%; min-height: 34px; padding: 3px 7px; border: 1px solid #c6e7e7; border-radius: 8px; background: #fff; color: #29465b; font-size: 11px; }
+.group-binding-controls .text-button { width: fit-content; min-height: 28px; padding: 2px 6px; font-size: 11px; }
+.group-binding-status { color: #0e8889 !important; font-weight: 700; }
 .poster-overlay {
   position: relative;
   width: 100%;
@@ -1667,3 +1671,37 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .cover-editor > img { width: 88px; height: 108px; border-radius: 8px; object-fit: contain; background: white; }
 .bottom-sheet [hidden] { display: none !important; }
 @media (max-width: 390px) { .smart-gallery { gap: 6px; }.smart-import { padding: 10px; }.smart-editor-grid { grid-template-columns: 1fr; } }
+.admin-section-tabs { margin: 14px 0; }
+.group-manager { background: #fff; border-radius: 20px; padding: 16px; box-shadow: 0 7px 28px #8fc4c52b; }
+.group-manager-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.group-manager-toolbar h2 { margin: 0; font-size: 21px; color: #203653; }
+.group-manager-toolbar small { color: #7994a3; font-size: 13px; }
+.group-manager-toolbar .primary-button { width: auto; min-height: 42px; padding: 8px 14px; white-space: nowrap; }
+.group-manager > input { width: 100%; min-height: 44px; border: 1px solid #dce9ec; border-radius: 12px; padding: 10px 12px; font: inherit; }
+.group-manager-list { margin-top: 12px; display: grid; gap: 8px; }
+.group-manager-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 13px; background: #f3f9fa; min-width: 0; }
+.group-manager-row img, .group-manager-placeholder { width: 56px; height: 48px; object-fit: cover; border-radius: 9px; flex: none; }
+.group-manager-placeholder { display: grid; place-items: center; background: #def7f6; color: #ef5e9b; font-size: 24px; }
+.group-manager-row > div:first-of-type { min-width: 0; flex: 1; }
+.group-manager-row strong, .group-manager-row small { display: block; overflow-wrap: anywhere; }
+.group-manager-row strong { color: #203653; font-size: 14px; }
+.group-manager-row small { color: #6f8290; font-size: 11px; }
+.group-manager-editor { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 12px; background: #152e42a8; }
+.group-manager-editor-card { width: min(100%, 530px); max-height: calc(100dvh - 24px); overflow: auto; padding: 18px; border-radius: 20px; background: #fff; box-shadow: 0 20px 55px #12304744; }
+.group-manager-editor-card h3 { margin: 0 0 12px; color: #203653; }
+.group-manager-editor-card > label { display: block; margin: 9px 0; color: #314a60; font-size: 13px; font-weight: 700; }
+.group-manager-editor-card > label input { display: block; width: 100%; min-height: 42px; margin-top: 4px; padding: 8px 10px; border: 1px solid #d3e5e8; border-radius: 10px; font: inherit; }
+.group-manager-editor-card > .secondary-button { width: 100%; min-height: 42px; }
+.group-manager-avatar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.group-manager-avatar img { width: 112px; height: 72px; object-fit: cover; border-radius: 9px; }
+.group-manager-avatar .secondary-button { width: auto; min-height: 42px; padding: 8px 12px; }
+.group-manager-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.group-manager-actions .primary-button { width: auto; min-height: 44px; padding: 8px 20px; }
+.smart-group-matches { margin: 10px 0; border: 1px solid #d7e9eb; border-radius: 12px; padding: 9px; }
+.smart-group-matches summary { cursor: pointer; color: #275066; font-weight: 700; }
+.smart-match-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #edf3f5; }
+.smart-match-row img, .smart-match-row > span { width: 38px; height: 26px; object-fit: cover; border-radius: 4px; }
+.smart-match-row > span { display: grid; place-items: center; background: #def7f6; }
+.smart-match-row strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.smart-match-row small { color: #678899; text-align: right; }
+@media (max-width: 520px) { .group-manager-row { flex-wrap: wrap; } .group-manager-row .admin-row-actions { width: 100%; justify-content: flex-end; } }

@@ -4,6 +4,7 @@ import type { IdolGroup } from "../types/timetable";
 import type { RuntimeGroupImages } from "../utils/poster";
 
 export const RuntimeImageContext = createContext<RuntimeGroupImages>({});
+export const LibraryImageContext = createContext<RuntimeGroupImages>({});
 
 interface Props {
   group: IdolGroup;
@@ -12,12 +13,13 @@ interface Props {
 
 export function GroupImage({ group, className = "" }: Props) {
   const runtimeImages = useContext(RuntimeImageContext);
+  const libraryImages = useContext(LibraryImageContext);
   const [brokenSources, setBrokenSources] = useState<string[]>([]);
   const runtimeSource = runtimeImages[group.id];
   const existingSource = group.image_base64
     ? `data:${group.image_mime};base64,${group.image_base64}`
     : "";
-  const source = [runtimeSource, existingSource].find(
+  const source = [libraryImages[group.id], runtimeSource, existingSource].find(
     (candidate) => candidate && !brokenSources.includes(candidate),
   );
   return (

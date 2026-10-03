@@ -17,6 +17,7 @@ vi.mock("../utils/activitiesApi", () => ({
   aiStatus: () => Promise.resolve({ configured: true }),
   parseWeibo: parsePost,
   recognizeTimetable: recognize,
+  listGroups: () => Promise.resolve([]),
 }));
 afterEach(() => {
   cleanup();
@@ -129,7 +130,7 @@ it("edits an existing activity visually while keeping JSON as the default", asyn
       event: expect.objectContaining({ title: "可视化修改后的活动" }),
       groups: expect.arrayContaining([expect.objectContaining({ start_time: "14:01", benefit_type: "final" })]),
     }),
-    expect.any(Object), null, "厦门",
+    expect.any(Object), null, "厦门", {},
   ));
 });
 

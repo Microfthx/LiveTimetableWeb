@@ -146,6 +146,36 @@ it("serves persisted WebP cover thumbnails and regenerates missing old thumbnail
   expect((await readdir(posterDir)).filter((name) => name.startsWith(created.id))).toEqual([]);
 });
 
+it("keeps group avatars server-side, exact matches new events, and protects referenced groups", async () => {
+  const name = demoData.groups[0].name;
+  expect((await request("/api/admin/groups", "POST", { name }, false)).status).toBe(401);
+  expect((await request("/api/admin/groups/weibo-profile", "POST", { url: "https://weibo.com/u/123456789", cookie: "SUB=test" }, false)).status).toBe(401);
+  const createdResponse = await request("/api/admin/groups", "POST", { name, avatarDataUrl: image });
+  expect(createdResponse.status).toBe(201);
+  const group = await createdResponse.json();
+  expect(group.avatarUrl).toContain(`/api/groups/${group.id}/avatar`);
+  const avatar = await request(group.avatarUrl);
+  expect(avatar.status).toBe(200);
+  expect(avatar.headers.get("content-type")).toBe("image/webp");
+  expect((await sharp(Buffer.from(await avatar.arrayBuffer())).metadata()).format).toBe("webp");
+  expect(JSON.stringify(group)).not.toContain("avatarFilename");
+  expect((await request("/api/admin/groups", "POST", { name: ` ${name} ` })).status).toBe(409);
+  await new Promise<void>((done) => server.close(() => done()));
+  await listen();
+  expect((await (await request("/api/groups")).json()).some((item: { id: string }) => item.id === group.id)).toBe(true);
+  cookie = (await request("/api/admin/login", "POST", { key })).headers.get("set-cookie")!.split(";")[0];
+  const activityResponse = await request("/api/admin/activities", "POST", { city: "上海", data: demoData });
+  expect(activityResponse.status).toBe(201);
+  const activity = await activityResponse.json();
+  expect(activity.groupBindings[demoData.groups[0].id]).toBe(group.id);
+  expect((await request(`/api/admin/groups/${group.id}`, "DELETE")).status).toBe(409);
+  expect((await request(`/api/admin/groups/${group.id}`, "PATCH", { name, avatarDataUrl: null })).status).toBe(200);
+  expect((await request(group.avatarUrl)).status).toBe(404);
+  expect((await request(`/api/admin/activities/${activity.id}`, "PATCH", { city: "上海", data: demoData, groupBindings: {} })).status).toBe(200);
+  expect((await request(`/api/admin/groups/${group.id}`, "DELETE")).status).toBe(200);
+  expect((await request(`/api/admin/activities/${activity.id}`, "DELETE")).status).toBe(200);
+});
+
 it("keeps the migrated event after restart and invalidates logout cookie", async () => {
   const saved = JSON.parse(await readFile(join(directory, "activities.json"), "utf8"));
   expect(saved).toHaveLength(1);

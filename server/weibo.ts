@@ -9,6 +9,8 @@ import {
 } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { imageSize } from "image-size";
+import sharp from "sharp";
+import type { WeiboGroupPreview } from "../src/types/groupLibrary.js";
 
 const UUID = /^[a-f0-9-]{36}$/;
 const IMAGE_ID = /^image_\d{3}$/;
@@ -181,6 +183,64 @@ function checkedImageUrl(raw: string): URL {
   if (url.protocol !== "https:")
     throw new WeiboError("WEIBO_IMAGE_FAILED", "微博图片地址协议无效。");
   return url;
+}
+
+export function profileUidFromUrl(raw: string): string {
+  let url: URL;
+  try { url = new URL(raw); }
+  catch { throw new WeiboError("WEIBO_INVALID_URL", "请输入微博主页链接。"); }
+  const parts = url.pathname.split("/").filter(Boolean);
+  const uid = parts.length === 2 && parts[0] === "u" ? parts[1]
+    : parts.length === 1 ? parts[0] : "";
+  if (url.protocol !== "https:" || !officialHost(url.hostname.toLowerCase()) || !/^\d{5,20}$/.test(uid))
+    throw new WeiboError("WEIBO_INVALID_URL", "请输入包含数字 UID 的微博主页链接。");
+  return uid;
+}
+
+/** Fetches a profile for preview only; nothing is stored until the admin saves. */
+export async function fetchWeiboGroupProfile(rawUrl: string, rawCookie: string, fetchFn: typeof fetch = fetch): Promise<WeiboGroupPreview> {
+  const uid = profileUidFromUrl(rawUrl);
+  const cookie = parseCookieHeader(rawCookie);
+  if (!cookie) throw new WeiboError("WEIBO_COOKIE_REQUIRED", "请输入微博 Cookie。", 400);
+  const headers = {
+    Cookie: cookie,
+    Accept: "application/json, text/plain, */*",
+    Referer: "https://m.weibo.cn/",
+    "User-Agent": "Mozilla/5.0 (compatible; LiveIdolTimetable/1.0)",
+  };
+  const response = await safeFetch(new URL(`https://m.weibo.cn/api/container/getIndex?type=uid&value=${uid}`), headers, officialHost, fetchFn);
+  if (response.status === 401 || response.status === 403 || response.headers.get("content-type")?.includes("text/html"))
+    throw new WeiboError("WEIBO_COOKIE_EXPIRED", "微博 Cookie 已失效，请重新获取 Cookie。", 401);
+  if (!response.ok) throw new WeiboError("WEIBO_REQUEST_FAILED", "微博主页读取失败，请稍后重试。", 502);
+  let payload: Record<string, unknown>;
+  try { payload = await response.json() as Record<string, unknown>; }
+  catch { throw new WeiboError("WEIBO_REQUEST_FAILED", "微博主页返回内容无法解析。", 502); }
+  const data = (payload.data ?? {}) as Record<string, unknown>;
+  const user = (data.userInfo ?? data.user ?? {}) as Record<string, unknown>;
+  if (!user || String(user.id ?? user.idstr ?? "") !== uid || typeof user.screen_name !== "string")
+    throw new WeiboError("WEIBO_REQUEST_FAILED", "微博主页资料不可用，请检查链接和 Cookie。", 502);
+  const avatarSourceUrl = [user.avatar_hd, user.avatar_large, user.profile_image_url].find((value) => typeof value === "string" && value.length > 0) as string | undefined;
+  let avatarDataUrl: string | undefined;
+  if (avatarSourceUrl) {
+    const imageUrl = checkedImageUrl(avatarSourceUrl);
+    const imageResponse = await safeFetch(imageUrl, {
+      Referer: "https://m.weibo.cn/", "User-Agent": headers["User-Agent"], Accept: "image/webp,image/png,image/jpeg,*/*;q=0.5",
+    }, imageHost, fetchFn);
+    if (!imageResponse.ok) throw new WeiboError("WEIBO_IMAGE_FAILED", "微博头像下载失败，请重试或手动上传。", 502);
+    const bytes = await limitedBytes(imageResponse);
+    checkedImage(bytes);
+    try {
+      const thumbnail = await sharp(bytes).rotate().resize(512, 512, { fit: "inside", withoutEnlargement: true }).webp({ quality: 85 }).toBuffer();
+      avatarDataUrl = `data:image/webp;base64,${thumbnail.toString("base64")}`;
+    } catch { throw new WeiboError("WEIBO_IMAGE_FAILED", "微博头像处理失败，请手动上传。", 502); }
+  }
+  return {
+    name: user.screen_name.trim().slice(0, 120),
+    weiboUid: uid,
+    weiboUrl: `https://weibo.com/u/${uid}`,
+    ...(avatarSourceUrl ? { avatarSourceUrl } : {}),
+    ...(avatarDataUrl ? { avatarDataUrl } : {}),
+  };
 }
 
 function pictureUrls(item: unknown): string[] {

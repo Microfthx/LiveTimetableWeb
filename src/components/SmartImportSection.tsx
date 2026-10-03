@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, ImageUp, Sparkles } from "lucide-react";
 import type { EventData, PosterSource } from "../types/timetable";
+import type { GroupLibraryRecord } from "../types/groupLibrary";
+import { exactGroupBindings } from "../utils/groupMatching";
 import type { AiCropDebugData } from "../types/aiCropDebug";
 import {
   aiStatus,
@@ -43,12 +45,14 @@ export interface SmartSourceSummary {
 }
 
 export function SmartImportSection({
+  libraryGroups = [],
   onPrepared,
   onCityRecognized,
   onDebug,
   onManual,
   manualRequest,
 }: {
+  libraryGroups?: GroupLibraryRecord[];
   onPrepared: (
     data: EventData,
     city: string,
@@ -644,6 +648,10 @@ export function SmartImportSection({
       {pending && (
         <section className="smart-pending">
           <h3>人工检查 AI 识别结果</h3>
+          <details className="smart-group-matches"><summary>团体库精确匹配 · {Object.keys(exactGroupBindings(pending.groups, libraryGroups)).length}/{pending.groups.length}</summary>
+            <p className="sheet-description">仅标准名完全一致才自动绑定。请在导入预览核对头像、手动调整绑定，未匹配团体继续使用本场裁剪。</p>
+            <div>{pending.groups.map((group) => { const id = exactGroupBindings([group], libraryGroups)[group.id]; const matched = libraryGroups.find((entry) => entry.id === id); return <div className="smart-match-row" key={group.id}>{matched?.avatarUrl ? <img src={matched.avatarUrl} alt="" /> : <span>✦</span>}<strong>{group.name}</strong><small>{matched ? "✓ 已匹配团体库" : "未匹配 · 使用 AI crop"}</small></div>; })}</div>
+          </details>
           <div className="smart-mode-tabs">
             <button
               className={editorTab === "json" ? "selected" : ""}

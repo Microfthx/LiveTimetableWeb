@@ -91,13 +91,14 @@ export async function cropGroupImages(
   data: EventData,
   poster: PosterSource,
   onProgress?: (done: number, total: number) => void,
+  skipIds: ReadonlySet<string> = new Set(),
 ): Promise<{ images: RuntimeGroupImages; failed: string[] }> {
   const image = await loadImage(poster.url);
   const images: RuntimeGroupImages = {};
   const failed: string[] = [];
   const total = data.groups.length;
   for (const [index, group] of data.groups.entries()) {
-    if (group.crop?.width && group.crop.height) {
+    if (!skipIds.has(group.id) && group.crop?.width && group.crop.height) {
       try {
         const blob = await cropImageFromPoster(image, group.crop);
         images[group.id] = URL.createObjectURL(blob);

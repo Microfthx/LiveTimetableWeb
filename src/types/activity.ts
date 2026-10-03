@@ -1,4 +1,5 @@
 import type { EventData } from "./timetable.js";
+import type { GroupBindings } from "./groupLibrary.js";
 
 /** Website metadata wraps the unchanged OCR v1.0 EventData. */
 export interface ActivityRecord {
@@ -11,6 +12,8 @@ export interface ActivityRecord {
   cropSourceUrl?: string;
   cropSourceSeparate?: boolean;
   data: EventData;
+  /** Event group id -> stable website group UUID. Older activities omit this. */
+  groupBindings?: GroupBindings;
   createdAt: string;
   updatedAt: string;
   /** Preserves cropped images published by the earlier single-event server. */

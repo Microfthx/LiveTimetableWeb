@@ -1,5 +1,6 @@
 import type { ActivityRecord } from "../types/activity";
 import type { EventData, PosterSource } from "../types/timetable";
+import type { GroupBindings, GroupLibraryRecord, WeiboGroupPreview } from "../types/groupLibrary";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -45,18 +46,32 @@ export function posterDataUrl(poster: PosterSource): Promise<string> {
   });
 }
 
-export async function createActivity(city: string, data: EventData, poster?: PosterSource | null, cropSource?: PosterSource | null) {
+export const listGroups = () => request<GroupLibraryRecord[]>("/api/groups");
+export const importWeiboGroupProfile = (url: string, cookie: string) =>
+  request<WeiboGroupPreview>("/api/admin/groups/weibo-profile", "POST", { url, cookie });
+export interface GroupDraft {
+  name: string;
+  weiboUid?: string;
+  weiboUrl?: string;
+  avatarSourceUrl?: string;
+  avatarDataUrl?: string | null;
+}
+export const createGroup = (draft: GroupDraft) => request<GroupLibraryRecord>("/api/admin/groups", "POST", draft);
+export const updateGroup = (id: string, draft: GroupDraft) => request<GroupLibraryRecord>(`/api/admin/groups/${encodeURIComponent(id)}`, "PATCH", draft);
+export const deleteGroup = (id: string) => request<{ ok: boolean }>(`/api/admin/groups/${encodeURIComponent(id)}`, "DELETE");
+
+export async function createActivity(city: string, data: EventData, poster?: PosterSource | null, cropSource?: PosterSource | null, groupBindings?: GroupBindings) {
   const displayData = poster ? await posterDataUrl(poster) : undefined;
   return request<ActivityRecord>("/api/admin/activities", "POST", {
-    city, data,
+    city, data, groupBindings,
     ...(displayData ? { poster: displayData } : {}),
     ...(cropSource && cropSource !== poster ? { cropSource: await posterDataUrl(cropSource) } : {}),
   });
 }
 
-export async function updateActivity(id: string, city: string, data: EventData, poster?: PosterSource | null, cropSource?: PosterSource | null) {
+export async function updateActivity(id: string, city: string, data: EventData, poster?: PosterSource | null, cropSource?: PosterSource | null, groupBindings?: GroupBindings) {
   return request<ActivityRecord>(`/api/admin/activities/${encodeURIComponent(id)}`, "PATCH", {
-    city, data,
+    city, data, groupBindings,
     ...(poster ? { poster: await posterDataUrl(poster) } : {}),
     ...(cropSource ? { cropSource: await posterDataUrl(cropSource) } : {}),
   });
