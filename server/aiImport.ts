@@ -155,7 +155,7 @@ export function aiInputParts(
 
 const instruction = `你是 Live Idol 演出时间表结构化识别器。只提取提供的单场活动信息，输出 EventData v1.0。
 若有管理员指定的 TIMETABLE SOURCE 图片，以该图的演出时间为准，微博正文用于交叉核对；若无时间表图，以微博正文为主要时间来源。Crop Source 上可能出现的时间优先级最低。单独的 ACTIVITY POSTER / CITY CONTEXT 图片只供识别活动信息与城市，不作为时间表或裁剪坐标来源。
-识别活动名称、日期、场地、OPEN、START、全部实际出演团体和每组 start_time/end_time；不要把 OPEN、START、特典会、物贩、交流会、票价、主办方或工作人员当团体。时间用 HH:mm，无法确认的字段留空，不根据相邻团体自动补时间。只出现月日时使用当前年份 ${new Date().getFullYear()}。
+识别活动名称、日期、场地、OPEN、START、全部实际出演团体和每组 start_time/end_time；不要把 OPEN、START、特典会、物贩、交流会、票价、主办方或工作人员当团体。时间用 HH:mm。某团有明确开始时间但没有结束时间、且下一团开始时间明确时，可以将下一团开始时间填为本团结束时间；已有结束时间不覆盖，最后一团或顺序不明时留空。不要推断特典时间。只出现月日时使用当前年份 ${new Date().getFullYear()}。
 为每个出演团体另外提取特典：明确的普通特典起止时间填写 benefit_type="normal"、benefit_time_start/end 为 HH:mm；只写“终特”则 benefit_type="final"、两个时间均为空字符串；没有可靠特典信息则 benefit_type="none"、两个时间均为空字符串。不要从演出时段推测特典时间，不要把特典时段当作演出时段。若普通特典仅识别到一侧时间，保留已知一侧，另一侧留空供管理员核对。
 groups 按开始时间排列，id 从 group_001 连续编号。delay_minutes 固定 0。
 所有 crop 仅相对于 GROUP VISUAL / CROP SOURCE，以 0 到 1 归一化坐标表示；找不到对应视觉时四项全 0。若完全没有 Crop Source，所有 crop 四项全 0。不要按 Timetable 图片计算 crop，除非它同时就是 Crop Source。

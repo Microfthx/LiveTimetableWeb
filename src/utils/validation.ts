@@ -4,7 +4,7 @@ import type {
   IdolGroup,
   PosterInfo,
 } from "../types/timetable.js";
-import { getGroupWindow, parseTime } from "./time.js";
+import { parseTime } from "./time.js";
 
 export class ImportError extends Error {}
 
@@ -153,7 +153,7 @@ export function validateEventDataDetailed(input: unknown): {
       ids.add(id);
       const name = requiredString(raw.name, `${label}.name`);
       const start_time = clock(raw.start_time, `${label}.start_time`, true);
-      const end_time = clock(raw.end_time, `${label}.end_time`, true);
+      const end_time = raw.end_time == null ? "" : clock(raw.end_time, `${label}.end_time`, true);
       const benefitTypeRaw = raw.benefit_type;
       if (benefitTypeRaw !== undefined &&
         !["normal", "final", "none"].includes(benefitTypeRaw as string))
@@ -178,8 +178,6 @@ export function validateEventDataDetailed(input: unknown): {
       } else if (benefit_time_start || benefit_time_end) {
         warnings.push(`${name} 的特典类型与时间不一致；终特或无特典不会显示时间`);
       }
-      if (!start_time || !end_time)
-        warnings.push(`${name} 的演出时间不完整，已放在待核对区域`);
       if (start_time && end_time) {
         if (start_time === end_time)
           throw new ImportError(`${name} 的结束时间必须晚于开始时间。`);
@@ -230,22 +228,35 @@ export function validateEventDataDetailed(input: unknown): {
       };
     },
   );
+  const anchor = parseTime(event.start_time ?? "00:00");
+  const chronologicalStart = (time: string) => {
+    const minute = parseTime(time);
+    if (!Number.isFinite(minute)) return Infinity;
+    return minute < anchor ? minute + 1440 : minute;
+  };
+  const ordered = groups
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => chronologicalStart(a.group.start_time) - chronologicalStart(b.group.start_time) || a.index - b.index);
+  const completedGroups = ordered.map(({ group }, index) => {
+    if (!group.start_time || group.end_time) return group;
+    const next = ordered[index + 1]?.group;
+    if (!next?.start_time) return group;
+    const duration = chronologicalStart(next.start_time) - chronologicalStart(group.start_time);
+    if (duration <= 0 || duration > 720) return group;
+    warnings.push(`${group.name} 的演出结束时间根据下一团「${next.name}」的开始时间自动补为 ${next.start_time}，请核对`);
+    return { ...group, end_time: next.start_time };
+  });
+  for (const group of completedGroups) {
+    if (!group.start_time || !group.end_time)
+      warnings.push(`${group.name} 的演出时间不完整，已放在待核对区域`);
+  }
   const data: EventData = {
     schema_version: "1.0",
     event,
     delay_minutes: delay,
     poster: posterInfo(root.poster),
-    groups,
+    groups: completedGroups,
   };
-  data.groups = groups
-    .map((group, index) => ({ group, index }))
-    .sort(
-      (a, b) =>
-        (getGroupWindow(data, a.group, false)?.start.getTime() ?? Infinity) -
-          (getGroupWindow(data, b.group, false)?.start.getTime() ?? Infinity) ||
-        a.index - b.index,
-    )
-    .map((item) => item.group);
   return { data, warnings };
 }
 

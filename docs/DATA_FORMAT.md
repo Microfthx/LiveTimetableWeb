@@ -49,7 +49,7 @@
 | `groups[].id` | string | 必填，非空且在活动内唯一。 |
 | `groups[].name` | string | 必填，非空。 |
 | `groups[].start_time` | string | 必填，`HH:mm` 或 `""`（OCR 无法确定）；始终表示**原始**时间。空时间放在时间轴末尾并提示核对。 |
-| `groups[].end_time` | string | 必填，`HH:mm` 或 `""`；时长确定时必须大于 0 且不超过 12 小时。 |
+| `groups[].end_time` | string | OCR 输出必填，`HH:mm` 或 `""`；手工/旧 JSON 缺少字段或给出 `null` 时按空字符串读取。来源未写结束时间但下一团开始时间明确时，可用下一团开始时间补全。补全后的时长必须大于 0 且不超过 12 小时；否则保持空字符串。最后一团没有下一团时不推测。 |
 | `groups[].benefit_type` | `normal` \| `final` \| `none` | OCR 输出必填；旧活动可省略，按 `none` 显示。`normal` 表示有明确的普通特典时间，`final` 表示只标注“终特”，`none` 表示没有可靠特典信息。 |
 | `groups[].benefit_time_start`, `groups[].benefit_time_end` | string | OCR 输出必填，分别为 `HH:mm` 或 `""`。`normal` 时从来源提取明确时间，不得从演出时间推断；`final` / `none` 时写空字符串。旧活动可省略。单侧缺失只提示核对，不影响演出时间。 |
 | `groups[].image_base64` | string | 可选，缺失等同 `""`。只放纯 Base64，不放 `data:` 前缀。空值显示占位图。 |
@@ -60,7 +60,8 @@
 
 ## 时间语义
 
-- `start_time` / `end_time` 永远是海报上的原始排程，**不能因现场延迟而改写**。
+- `start_time` / `end_time` 表示来源排程的钟点；按下一团开始时间补出的结束钟点也属于导入时的排程数据，**不能因现场延迟而改写**。
+- 缺少某团演出结束时间时，导入标准化按演出开始时间排序后，取下一团的有效开始时间作为本团结束时间；只在能形成 1 分钟至 12 小时的正时长时补全，并在预览提示人工核对。已有结束时间不覆盖；缺少开始时间、下一团时间无效或最后一团时不补全。跨午夜按 `event.start_time` 锚点判断。自动补全不作用于特典时间，也不叠加 `delay_minutes`。
 - 特典时间是独立的原始时段，不从演出时间推断；`delay_minutes` 仅调整演出时段，特典时间保持其明确标注的钟点。`benefit_status` 是网页根据当前时刻计算的 `upcoming` / `ongoing` / `ended` / `none`，不写入 OCR JSON 或数据库。列表只有一个主状态：普通特典进行中显示“特典中”，结束后显示“特典结束”；其余按演出进度显示 `UPCOMING`、`NEXT`、“演出中”或“演出结束”。
 - 实际显示和状态判断使用 `effective_time = original_time + delay_minutes`。当前演出、下一组、进度、倒计时均依此计算。
 - 时间区间左闭右开：`effectiveStart <= now < effectiveEnd` 为 `LIVE`；结束时刻开始为 `FINISHED`。
@@ -77,6 +78,7 @@
 5. `delay_minutes` 固定为 0；`poster` 放真实输入图片像素尺寸，不知道时宽高都写 0。
 6. 每组必须带 `crop`；无法确定时四项全写 0。OCR 不输出图片 Base64，由网页裁剪。
 7. 每组输出 `benefit_type` 和两个特典时间字段：明确的普通特典时段用 `normal` + 起止时间，只有“终特”用 `final` + 两个空字符串，无可靠信息用 `none` + 两个空字符串。不要推测特典时段，也不要把特典会识别为演出团体。
+8. 海报没有写某团演出结束时间，但下一团开始时间明确时，可把下一团开始时间填为本团 `end_time`。最后一团或无法形成合理正时长时保留空字符串；不要据此推测特典结束时间。
 
 完整 Prompt 的唯一文本位于仓库根目录 `json生成prompt.txt`，`src/constants/ocrPrompt.ts` 在运行时填入当前年份。更改 Prompt、网页或后端之前，先更新此协议。
 

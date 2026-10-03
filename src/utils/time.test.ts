@@ -120,6 +120,58 @@ describe("OCR JSON validation", () => {
     expect(parsed.groups[1].start_time).toBe("14:10");
   });
 
+  it("fills a missing performance end from the next chronological start before preview", () => {
+    const first = { ...demoData.groups[0], end_time: "" };
+    const later = { ...demoData.groups[2], start_time: "14:30", end_time: "" };
+    const middle = { ...demoData.groups[1], start_time: "14:20", end_time: "14:25" };
+    const raw = { ...demoData, groups: [later, first, middle] };
+    const result = parseEventJsonDetailed(JSON.stringify(raw));
+    expect(result.data.groups.map((group) => [group.start_time, group.end_time])).toEqual([
+      ["14:00", "14:20"], ["14:20", "14:25"], ["14:30", ""],
+    ]);
+    expect(result.warnings.join(" ")).toContain("自动补为 14:20");
+    expect(result.warnings.join(" ")).toContain(`${later.name} 的演出时间不完整`);
+    expect(raw.groups[1].end_time).toBe("");
+    expect(getCurrentPerformance(result.data, at(14, 5))?.id).toBe(first.id);
+    const delayed = { ...result.data, delay_minutes: 15 };
+    expect(getEffectiveTime(delayed, delayed.groups[0])?.end.getMinutes()).toBe(35);
+    expect(delayed.groups[0].end_time).toBe("14:20");
+    const withoutEndField = validateEventData({ ...demoData, groups: [
+      { id: "first", name: "First", start_time: "14:00" },
+      { id: "second", name: "Second", start_time: "14:20", end_time: "14:40" },
+    ] });
+    expect(withoutEndField.groups[0].end_time).toBe("14:20");
+    expect(withoutEndField.groups[1].end_time).toBe("14:40");
+    expect(validateEventData({ ...demoData, groups: [
+      { id: "first", name: "First", start_time: "14:00", end_time: null },
+      { id: "second", name: "Second", start_time: "14:20", end_time: "14:40" },
+    ] }).groups[0].end_time).toBe("14:20");
+  });
+
+  it("only infers a positive reasonable interval and supports a midnight handoff", () => {
+    const night = {
+      ...demoData,
+      event: { ...demoData.event, start_time: "23:00" },
+      groups: [
+        { ...demoData.groups[0], start_time: "23:50", end_time: "" },
+        { ...demoData.groups[1], start_time: "00:15", end_time: "00:35" },
+      ],
+    };
+    const parsed = validateEventData(night);
+    expect(parsed.groups[0].end_time).toBe("00:15");
+    expect(getEffectiveTime(parsed, parsed.groups[0])?.end.getDate()).toBe(2);
+    const sameStart = validateEventData({ ...demoData, groups: [
+      { ...demoData.groups[0], end_time: "" },
+      { ...demoData.groups[1], start_time: "14:00", end_time: "14:20" },
+    ] });
+    expect(sameStart.groups[0].end_time).toBe("");
+    const tooLong = validateEventData({ ...demoData, groups: [
+      { ...demoData.groups[0], end_time: "" },
+      { ...demoData.groups[1], start_time: "03:00", end_time: "03:20" },
+    ] });
+    expect(tooLong.groups[0].end_time).toBe("");
+  });
+
   it("rejects malformed times and leaves missing images empty", () => {
     const raw = {
       ...demoData,
