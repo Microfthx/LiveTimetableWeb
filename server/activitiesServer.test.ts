@@ -160,6 +160,8 @@ it("keeps group avatars server-side, exact matches new events, and protects refe
   expect((await sharp(Buffer.from(await avatar.arrayBuffer())).metadata()).format).toBe("webp");
   expect(JSON.stringify(group)).not.toContain("avatarFilename");
   expect((await request("/api/admin/groups", "POST", { name: ` ${name} ` })).status).toBe(409);
+  expect((await request("/api/admin/groups", "POST", { name: `-${name}-` })).status).toBe(409);
+  expect((await request("/api/admin/groups", "POST", { name: name.toUpperCase() })).status).toBe(409);
   await new Promise<void>((done) => server.close(() => done()));
   await listen();
   expect((await (await request("/api/groups")).json()).some((item: { id: string }) => item.id === group.id)).toBe(true);

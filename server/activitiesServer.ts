@@ -7,7 +7,7 @@ import { imageSize } from "image-size";
 import sharp from "sharp";
 import type { ActivityRecord } from "../src/types/activity.js";
 import type { GroupBindings, GroupLibraryRecord } from "../src/types/groupLibrary.js";
-import { canonicalGroupName, exactGroupBindings } from "../src/utils/groupMatching.js";
+import { canonicalGroupName, exactGroupBindings, groupMatchKey } from "../src/utils/groupMatching.js";
 import { validateEventData } from "../src/utils/validation.js";
 import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
 import { createWeiboStore, fetchWeiboGroupProfile, profileUidFromUrl, WeiboError } from "./weibo.js";
@@ -241,7 +241,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
   function groupFields(input: Record<string, unknown>, currentId?: string) {
     const name = typeof input.name === "string" ? canonicalGroupName(input.name) : "";
     if (!name || name.length > 120) throw new HttpError(400, "团体名称不能为空，且不能超过 120 个字符。");
-    if (library.some((group) => group.id !== currentId && canonicalGroupName(group.name) === name))
+    if (library.some((group) => group.id !== currentId && groupMatchKey(group.name) === groupMatchKey(name)))
       throw new HttpError(409, "团体库中已存在同名团体。");
     let weiboUid = typeof input.weiboUid === "string" ? input.weiboUid.trim() : "";
     const weiboUrl = typeof input.weiboUrl === "string" ? input.weiboUrl.trim() : "";
