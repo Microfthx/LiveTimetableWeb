@@ -25,6 +25,8 @@ OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version:
 
 独立 Nginx 监听 `9999`，Node API 仅监听本机 `127.0.0.1:10001`。部署文件位于 `deploy/`。前端由 `/opt/live-idol-timetable/current` 提供，API 从 `/opt/live-idol-timetable/api-current/server/main.js` 启动，数据位于 `/var/lib/live-idol-timetable/`。`/etc/live-idol-timetable-api.env` 至少设置：
 
+服务器的 9000 / 9999 端口访问记录及 `live-access` 查看命令见 [docs/ACCESS_LOGS.md](docs/ACCESS_LOGS.md)。
+
 ```ini
 ADMIN_ACCESS_KEY=请使用长随机密钥
 ADMIN_SESSION_SECRET=请使用独立的至少32字符随机密钥
