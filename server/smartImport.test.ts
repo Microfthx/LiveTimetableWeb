@@ -248,12 +248,13 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
   const result = await recognizeEvent({
     timetable: picture, crop: picture, cover: { ...picture }, postText: "14:00 Gara", mode: "normal",
     debug: true,
-    apiKey: "test-secret", normalModel: "google/gemini-2.5-flash", fetchImpl: fakeFetch,
+    apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
   });
   expect(requests).toHaveLength(1);
   expect(requests[0].url).toBe("https://openrouter.ai/api/v1/chat/completions");
   expect(requests[0].headers.get("Authorization")).toBe("Bearer test-secret");
-  expect(requests[0].body.model).toBe("google/gemini-2.5-flash");
+  expect(requests[0].body.model).toBe("z-ai/glm-5.3-flash");
+  expect(requests[0].body.reasoning).toEqual({ effort: "low" });
   expect(requests[0].body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true, schema: AI_IMPORT_SCHEMA } });
   expect(requests[0].body.provider).toEqual({ require_parameters: true });
   const content = (requests[0].body.messages as Array<{ content: Array<{ type: string; text?: string }> }>)[1].content;
@@ -298,6 +299,18 @@ it("keeps malformed successful API responses distinct from timeouts", async () =
     timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
     apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
   })).rejects.toMatchObject({ code: "AI_INVALID_OUTPUT" });
+});
+
+it("explains a model output cutoff instead of treating partial JSON as an import", async () => {
+  const fakeFetch = (async () => new Response(JSON.stringify({
+    choices: [{ finish_reason: "length", message: { content: '{"schema_version":' } }],
+    usage: { completion_tokens: 8192, completion_tokens_details: { reasoning_tokens: 7000 } },
+    provider: "example-provider",
+  }), { status: 200 })) as typeof fetch;
+  await expect(recognizeEvent({
+    timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
+  })).rejects.toMatchObject({ code: "AI_INVALID_OUTPUT", message: "AI 输出被截断，请尝试高精度识别或手动 JSON。" });
 });
 
 it("distinguishes a provider restriction from an invalid OpenRouter key", async () => {

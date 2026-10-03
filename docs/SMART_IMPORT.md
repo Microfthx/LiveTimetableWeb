@@ -28,4 +28,6 @@
 
 较长的图片时间表可能在 HTTP 200 响应头到达后仍持续生成响应体。API 为整次 OpenRouter 请求保留 240 秒，9999 端口 Nginx 的 `/api/` 读取超时设为 270 秒；响应体在读取阶段超时会明确报告 AI 超时。人工复制的 OCR Prompt 则优先要求聊天模型生成可下载的 `.json` 文件；自动导入仍读取 OpenRouter JSON API 响应，不依赖附件。
 
+普通模式的 GLM-5.3 Flash 请求使用 `reasoning.effort: "low"`，减少结构化提取时大量内部推理耗尽输出预算的概率；仍保留 `response_format: json_schema` 与 `provider.require_parameters: true`。`finish_reason: "length"` 明确报告输出被截断，并记录模型、provider、token 用量和耗时等非敏感诊断信息。高精度 Qwen 按原参数请求，普通识别失败时也可在界面直接选择高精度识别；两种结果都进入人工检查草稿。
+
 当前微博获取基于单条博文的移动端详情接口；微博若改变接口或要求额外验证，界面会提示失败，管理员可以使用本地图片或手动 JSON 继续。OpenRouter 调用只在管理员点击按钮时发生，失败不清空素材、角色、城市或草稿。

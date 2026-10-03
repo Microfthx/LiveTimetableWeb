@@ -108,6 +108,18 @@ it("allows timetable text without an image and reaches the existing preview path
   expect(cover).toBeNull();
 });
 
+it("offers high precision recognition after normal recognition fails", async () => {
+  recognize.mockRejectedValueOnce(new Error("AI 输出被截断，请尝试高精度识别或手动 JSON。"));
+  recognize.mockResolvedValueOnce({ data: demoData, city: "", warnings: [], model: "qwen/qwen3.8-27b", mode: "high" });
+  render(<SmartImportSection onPrepared={() => undefined} onCityRecognized={() => undefined} onManual={() => undefined} manualRequest={0} />);
+  fireEvent.change(screen.getByPlaceholderText(/14:00 Gara/), { target: { value: "14:00 Gara" } });
+  fireEvent.click(await screen.findByRole("button", { name: "AI 识别 Timetable" }));
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "高精度识别 Timetable" }));
+  await waitFor(() => expect(recognize).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "high" })));
+  await screen.findByText("人工检查 AI 识别结果");
+});
+
 it("edits an existing activity visually while keeping JSON as the default", async () => {
   const onImport = vi.fn().mockResolvedValue(undefined);
   render(<ImportBottomSheet

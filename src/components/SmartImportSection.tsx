@@ -617,15 +617,13 @@ export function SmartImportSection({
         {busy === "ai" ? "AI 识别中…" : "AI 识别 Timetable"}
       </button>
       {busy === "ai" && <p className="sheet-description" role="status">图片较多时识别可能需要几分钟，请保持页面打开。</p>}
-      {pending && (
-        <button
-          className="secondary-button"
-          disabled={!!busy || configured === false}
-          onClick={() => void recognize("high")}
-        >
-          重新识别 Timetable
-        </button>
-      )}
+      <button
+        className="secondary-button"
+        disabled={!!busy || configured === false || (!timetable && !postText.trim())}
+        onClick={() => void recognize("high")}
+      >
+        高精度识别 Timetable
+      </button>
       <button
         className="text-button"
         disabled={!!busy}

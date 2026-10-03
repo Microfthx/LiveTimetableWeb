@@ -219,6 +219,7 @@ export async function recognizeEvent(input: {
           },
         },
         provider: { require_parameters: true },
+        ...(model === "z-ai/glm-5.3-flash" ? { reasoning: { effort: "low" } } : {}),
       }),
       signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
     });
@@ -247,7 +248,8 @@ export async function recognizeEvent(input: {
   }
   let completion: {
     choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    usage?: { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
+    provider?: string;
   };
   try {
     completion = await response.json();
@@ -269,12 +271,24 @@ export async function recognizeEvent(input: {
     );
   }
   const choice = completion.choices?.[0];
-  if (!choice?.message?.content || choice.finish_reason === "length")
+  if (!choice?.message?.content || choice.finish_reason === "length") {
+    console.warn("AI incomplete completion", {
+      model,
+      provider: completion.provider,
+      finishReason: choice?.finish_reason ?? "missing",
+      contentLength: choice?.message?.content?.length ?? 0,
+      outputTokens: completion.usage?.completion_tokens,
+      reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens,
+      latencyMs: Date.now() - started,
+    });
     throw new AiImportError(
       "AI_INVALID_OUTPUT",
-      "AI 未返回完整结果，请重试或手动编辑。",
+      choice?.finish_reason === "length"
+        ? "AI 输出被截断，请尝试高精度识别或手动 JSON。"
+        : "AI 未返回内容，请尝试高精度识别或手动 JSON。",
       502,
     );
+  }
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(sanitizeJsonInput(choice.message.content)) as Record<string, unknown>;
@@ -323,11 +337,13 @@ export async function recognizeEvent(input: {
   }
   console.info("AI import", {
     model,
+    provider: completion.provider,
     success: true,
     latencyMs: Date.now() - started,
     groups: data.groups.length,
     inputTokens: completion.usage?.prompt_tokens,
     outputTokens: completion.usage?.completion_tokens,
+    reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens,
   });
   const debug: AiCropDebugData | undefined = input.debug ? {
     groups: raw.groups.map((item) => {
