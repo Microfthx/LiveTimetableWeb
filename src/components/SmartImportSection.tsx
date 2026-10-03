@@ -12,6 +12,7 @@ import { copyTextToClipboard } from "../utils/clipboard";
 import { readPoster } from "../utils/poster";
 import { parseEventJsonDetailed } from "../utils/validation";
 import { OCR_PROMPT } from "../constants/ocrPrompt";
+import { EventDataVisualEditor } from "./EventDataVisualEditor";
 
 const WEIBO_COOKIE_KEY = "live-idol-weibo-cookie";
 
@@ -40,19 +41,20 @@ export interface SmartSourceSummary {
   origin: "微博" | "本地上传";
 }
 
-const EMPTY_CROP = { x: 0, y: 0, width: 0, height: 0 };
-
 export function SmartImportSection({
   onPrepared,
+  onCityRecognized,
   onManual,
   manualRequest,
 }: {
   onPrepared: (
     data: EventData,
+    city: string,
     crop: PosterSource | null,
     cover: PosterSource | null,
     summary: SmartSourceSummary,
   ) => void;
+  onCityRecognized: (city: string) => void;
   onManual: (
     crop: PosterSource | null,
     cover: PosterSource | null,
@@ -83,7 +85,8 @@ export function SmartImportSection({
   const [originalAi, setOriginalAi] = useState<EventData | null>(null);
   const [mode, setMode] = useState<"normal" | "high">("normal");
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [editorTab, setEditorTab] = useState<"visual" | "json">("visual");
+  const [recognizedCity, setRecognizedCity] = useState("");
+  const [editorTab, setEditorTab] = useState<"visual" | "json">("json");
   const [jsonDraft, setJsonDraft] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
   const localUrls = useRef(new Set<string>());
@@ -111,7 +114,9 @@ export function SmartImportSection({
   const byId = (id: string) => images.find((item) => item.id === id) ?? null;
   const timetable = byId(roles.timetable);
   const crop = byId(roles.crop) ?? timetable;
-  const cover = byId(roles.cover) ?? crop;
+  const selectedCover = byId(roles.cover);
+  const cover = selectedCover ?? crop;
+  const cityContext = selectedCover ?? images.find((item) => item.id !== timetable?.id && item.id !== crop?.id) ?? null;
   const summary = (): SmartSourceSummary => ({
     timetable: timetable?.url ?? (postText.trim() ? "微博正文" : "未选择"),
     crop: crop?.url ?? "无图片",
@@ -129,27 +134,23 @@ export function SmartImportSection({
     setDraftDirty(true);
     setError("");
   };
-  const updateEvent = (field: keyof EventData["event"], value: string) => {
-    if (pending)
-      updatePending({
-        ...pending,
-        event: { ...pending.event, [field]: value },
-      });
-  };
-  const updateGroup = (index: number, field: string, value: string) => {
+  const showVisualEditor = () => {
     if (!pending) return;
-    const groups = pending.groups.map((group, at) => {
-      if (at !== index) return group;
-      if (field.startsWith("crop.")) {
-        const key = field.slice(5) as keyof typeof EMPTY_CROP;
-        return {
-          ...group,
-          crop: { ...EMPTY_CROP, ...group.crop, [key]: Number(value) },
-        };
+    if (jsonDraft !== JSON.stringify(pending, null, 2)) {
+      try {
+        const parsed = parseEventJsonDetailed(jsonDraft);
+        if (parsed.city) {
+          setRecognizedCity(parsed.city);
+          onCityRecognized(parsed.city);
+        }
+        updatePending(parsed.data);
+        setWarnings(parsed.warnings);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "JSON 格式错误，请先修正草稿。");
+        return;
       }
-      return { ...group, [field]: value };
-    });
-    updatePending({ ...pending, groups });
+    }
+    setEditorTab("visual");
   };
 
   const fetchPost = async () => {
@@ -239,18 +240,23 @@ export function SmartImportSection({
       const result = await recognizeTimetable({
         timetableSource: timetable?.source ?? null,
         cropSource: crop?.source ?? null,
+        coverSource: cityContext?.source ?? null,
         weiboText: postText,
         mode: requestedMode,
       });
       setPending(result.data);
+      setRecognizedCity(result.city ?? "");
+      onCityRecognized(result.city ?? "");
       setOriginalAi(structuredClone(result.data));
       setJsonDraft(JSON.stringify(result.data, null, 2));
       setWarnings(result.warnings);
       setMode(requestedMode);
       setDraftDirty(false);
-      setEditorTab("visual");
+      setEditorTab("json");
       setShowSources(false);
-      setNotice("AI 识别完成。请人工核对，再生成导入预览。");
+      setNotice(result.city
+        ? `AI 识别完成，城市：${result.city}。请人工核对，再生成导入预览。`
+        : "AI 识别完成；城市未能确认，请手动填写。请人工核对，再生成导入预览。");
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -320,7 +326,7 @@ export function SmartImportSection({
       setPending(checked.data);
       setJsonDraft(JSON.stringify(checked.data, null, 2));
       setWarnings(checked.warnings);
-      onPrepared(checked.data, cropPoster, coverPoster, summary());
+      onPrepared(checked.data, recognizedCity, cropPoster, coverPoster, summary());
       transferred = true;
     } catch (cause) {
       if (!transferred) {
@@ -340,6 +346,10 @@ export function SmartImportSection({
   const applyJson = () => {
     try {
       const parsed = parseEventJsonDetailed(jsonDraft);
+      if (parsed.city) {
+        setRecognizedCity(parsed.city);
+        onCityRecognized(parsed.city);
+      }
       updatePending(parsed.data);
       setWarnings(parsed.warnings);
       setNotice("JSON 修改已应用；请生成预览后确认导入。");
@@ -571,6 +581,9 @@ export function SmartImportSection({
         <span>
           活动封面：{cover ? `图 ${images.indexOf(cover) + 1}` : "占位图"}
         </span>
+        <span>
+          城市参考图：{cityContext ? `图 ${images.indexOf(cityContext) + 1}` : "使用时间表图 / 正文"}
+        </span>
       </div>
       {configured === false && (
         <p className="form-warning">
@@ -592,7 +605,7 @@ export function SmartImportSection({
           disabled={!!busy || configured === false}
           onClick={() => void recognize("high")}
         >
-          使用高精度模型重新识别
+          重新识别 Timetable
         </button>
       )}
       <button
@@ -622,147 +635,25 @@ export function SmartImportSection({
           <h3>人工检查 AI 识别结果</h3>
           <div className="smart-mode-tabs">
             <button
-              className={editorTab === "visual" ? "selected" : ""}
-              onClick={() => setEditorTab("visual")}
-            >
-              可视化编辑
-            </button>
-            <button
               className={editorTab === "json" ? "selected" : ""}
               onClick={() => setEditorTab("json")}
             >
               JSON 编辑
             </button>
+            <button
+              className={editorTab === "visual" ? "selected" : ""}
+              onClick={showVisualEditor}
+            >
+              可视化编辑
+            </button>
           </div>
           {editorTab === "visual" ? (
-            <>
-              <div className="smart-editor-grid">
-                {(
-                  [
-                    "title",
-                    "date",
-                    "venue",
-                    "doors_time",
-                    "start_time",
-                  ] as const
-                ).map((field) => (
-                  <label key={field}>
-                    {
-                      {
-                        title: "活动名称",
-                        date: "日期 YYYY-MM-DD",
-                        venue: "场地",
-                        doors_time: "OPEN",
-                        start_time: "START",
-                      }[field]
-                    }
-                    <input
-                      value={pending.event[field] ?? ""}
-                      onChange={(event) =>
-                        updateEvent(field, event.target.value)
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="smart-group-list">
-                {pending.groups.map((group, index) => (
-                  <div
-                    className="smart-group-editor"
-                    key={`${index}-${group.id}`}
-                  >
-                    <strong>团体 {index + 1}</strong>
-                    <button
-                      className="text-button"
-                      onClick={() =>
-                        updatePending({
-                          ...pending,
-                          groups: pending.groups.filter(
-                            (_, at) => at !== index,
-                          ),
-                        })
-                      }
-                    >
-                      删除
-                    </button>
-                    <div className="smart-editor-grid">
-                      <label>
-                        团名
-                        <input
-                          value={group.name}
-                          onChange={(event) =>
-                            updateGroup(index, "name", event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        开始
-                        <input
-                          value={group.start_time}
-                          onChange={(event) =>
-                            updateGroup(index, "start_time", event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        结束
-                        <input
-                          value={group.end_time}
-                          onChange={(event) =>
-                            updateGroup(index, "end_time", event.target.value)
-                          }
-                        />
-                      </label>
-                      {(["x", "y", "width", "height"] as const).map((field) => (
-                        <label key={field}>
-                          crop.{field}
-                          <input
-                            type="number"
-                            min="0"
-                            max="1"
-                            step="0.001"
-                            value={group.crop?.[field] ?? 0}
-                            onChange={(event) =>
-                              updateGroup(
-                                index,
-                                `crop.${field}`,
-                                event.target.value,
-                              )
-                            }
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  updatePending({
-                    ...pending,
-                    groups: [
-                      ...pending.groups,
-                      {
-                        id: `draft_${crypto.randomUUID()}`,
-                        name: "",
-                        start_time: "",
-                        end_time: "",
-                        image_base64: "",
-                        image_mime: "image/jpeg",
-                        crop: { ...EMPTY_CROP },
-                      },
-                    ],
-                  })
-                }
-              >
-                + 添加团体
-              </button>
-            </>
+            <EventDataVisualEditor data={pending} onChange={updatePending} />
           ) : (
             <>
               <textarea
                 className="smart-json-draft"
+                aria-label="AI 识别结果 JSON"
                 value={jsonDraft}
                 onChange={(event) => setJsonDraft(event.target.value)}
                 spellCheck={false}

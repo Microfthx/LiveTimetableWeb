@@ -22,6 +22,7 @@ import {
 } from "../utils/poster";
 import { GroupImage, RuntimeImageContext } from "./GroupImage";
 import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSection";
+import { EventDataVisualEditor } from "./EventDataVisualEditor";
 
 export function Sheet({
   title,
@@ -211,10 +212,13 @@ export function ImportBottomSheet({
   onClose: () => void;
 }) {
   const [text, setText] = useState(() => initialData ? JSON.stringify(initialData, null, 2) : "");
+  const [editTab, setEditTab] = useState<"json" | "visual">("json");
+  const [visualDraft, setVisualDraft] = useState<EventData | null>(() => initialData ?? null);
   const [importMode, setImportMode] = useState<"smart" | "manual">(smartEnabled ? "smart" : "manual");
   const [manualRequest, setManualRequest] = useState(0);
   const [sourceSummary, setSourceSummary] = useState<SmartSourceSummary | null>(null);
   const [city, setCity] = useState(initialCity);
+  const cityEditedRef = useRef(Boolean(initialCity.trim()));
   const [candidate, setCandidate] = useState<{
     data: EventData;
     warnings: string[];
@@ -229,6 +233,7 @@ export function ImportBottomSheet({
   const [toast, setToast] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const posterRef = useRef<HTMLInputElement>(null);
+  const visualPosterRef = useRef<HTMLInputElement>(null);
   const displayPosterFileRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef<RuntimeGroupImages>({});
   const confirmingRef = useRef(false);
@@ -283,7 +288,8 @@ export function ImportBottomSheet({
       setPreview({ images: {}, failed: [] });
       setProcessing(!!poster);
       setCandidate(parsed);
-      if (parsed.city) setCity(parsed.city);
+      setVisualDraft(parsed.data);
+      if (parsed.city) { cityEditedRef.current = true; setCity(parsed.city); }
       setError("");
       setToast("");
     } catch (cause) {
@@ -292,9 +298,11 @@ export function ImportBottomSheet({
       setError(cause instanceof Error ? cause.message : "JSON 解析失败。");
     }
   };
-  const prepareSmart = (data: EventData, crop: PosterSource | null, cover: PosterSource | null, summary: SmartSourceSummary) => {
+  const prepareSmart = (data: EventData, recognizedCity: string, crop: PosterSource | null, cover: PosterSource | null, summary: SmartSourceSummary) => {
     setText(JSON.stringify(data, null, 2));
     setCandidate(parseEventJsonDetailed(JSON.stringify(data)));
+    setVisualDraft(data);
+    if (!cityEditedRef.current && recognizedCity) setCity(recognizedCity);
     setSourceSummary(summary);
     setPreview({ images: {}, failed: [] });
     setProcessing(!!crop);
@@ -341,6 +349,40 @@ export function ImportBottomSheet({
           ? cause.message
           : "海报读取失败，请重新选择图片。",
       );
+    }
+  };
+  const showVisualEditor = () => {
+    try {
+      const parsed = parseEventJsonDetailed(text);
+      setVisualDraft(parsed.data);
+      if (parsed.city) { cityEditedRef.current = true; setCity(parsed.city); }
+      setEditTab("visual");
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "JSON 格式错误，请先修正草稿。");
+    }
+  };
+  const changeVisualDraft = (next: EventData) => {
+    setVisualDraft(next);
+    setText(JSON.stringify(next, null, 2));
+    setCandidate(null);
+    setPreview({ images: {}, failed: [] });
+    setError("");
+    onDirtyChange?.(true);
+  };
+  const applyVisualDraft = () => {
+    if (!visualDraft) return;
+    try {
+      const parsed = parseEventJsonDetailed(JSON.stringify(visualDraft));
+      setVisualDraft(parsed.data);
+      setText(JSON.stringify(parsed.data, null, 2));
+      setCandidate(parsed);
+      setPreview({ images: {}, failed: [] });
+      setProcessing(!!poster);
+      setError("");
+      onDirtyChange?.(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "活动数据校验失败。");
     }
   };
   const copy = async (value: string, success: string) => {
@@ -400,11 +442,16 @@ export function ImportBottomSheet({
     <Sheet title={sheetTitle} onClose={onClose}>
       <label className="input-label" htmlFor="activity-city">活动城市 *</label>
       <input id="activity-city" className="activity-city-input" value={city} maxLength={80}
-        onChange={(event) => { setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
+        onChange={(event) => { cityEditedRef.current = !!event.target.value.trim(); setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
       {showDisplayPosterEditor && <div className="cover-editor"><strong>活动列表封面</strong>{displayPoster && <img src={displayPoster.url} alt="当前活动列表封面" />}<button className="secondary-button" disabled={processing} onClick={() => displayPosterFileRef.current?.click()}>更换活动封面</button>{coverReplacementPending && <p className="form-warning">新活动封面尚未保存。</p>}<input ref={displayPosterFileRef} type="file" className="visually-hidden" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPoster(file).then((source) => { onDisplayPosterSelect?.(source); onDirtyChange?.(true); setError(""); }).catch((cause) => setError(cause instanceof Error ? cause.message : "封面读取失败。")); event.target.value = ""; }} /></div>}
       {smartEnabled && <div className="smart-mode-tabs import-mode-tabs"><button className={importMode === "smart" ? "selected" : ""} onClick={() => setImportMode("smart")}>智能导入</button><button className={importMode === "manual" ? "selected" : ""} onClick={() => { if (importMode === "smart") setManualRequest((value) => value + 1); }}>手动 JSON</button></div>}
-      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
+      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onCityRecognized={(recognizedCity) => { if (!cityEditedRef.current) setCity(recognizedCity); }} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
       <div hidden={importMode !== "manual"}>
+      {initialData && <div className="smart-mode-tabs" role="tablist" aria-label="活动编辑方式">
+        <button role="tab" aria-selected={editTab === "json"} className={editTab === "json" ? "selected" : ""} onClick={() => setEditTab("json")}>JSON 编辑</button>
+        <button role="tab" aria-selected={editTab === "visual"} className={editTab === "visual" ? "selected" : ""} onClick={showVisualEditor}>可视化编辑</button>
+      </div>}
+      <div hidden={editTab !== "json"}>
       <section className="ocr-workflow" aria-label="AI 海报识别">
         <h3>AI 海报识别</h3>
         <p className="sheet-description">
@@ -542,13 +589,31 @@ export function ImportBottomSheet({
           const parsedCity = parsed.city || city.trim();
           setText(JSON.stringify({ ...parsed.data, ...(parsedCity ? { city: parsedCity } : {}) }, null, 2));
           setCandidate(parsed);
-          if (parsed.city) setCity(parsed.city);
+          setVisualDraft(parsed.data);
+          if (parsed.city) { cityEditedRef.current = true; setCity(parsed.city); }
           setPreview({ images: {}, failed: [] });
           setProcessing(!!poster);
           setError("");
           onDirtyChange?.(true);
         } catch (cause) { setProcessing(false); setError(cause instanceof Error ? cause.message : "JSON 格式错误。"); }
       }}>格式化 JSON</button>
+      </div>
+      {initialData && editTab === "visual" && visualDraft && (
+        <div className="visual-activity-editor">
+          <div className="cover-editor">
+            <strong>团体裁剪海报</strong>
+            {poster && <img src={poster.url} alt="当前团体裁剪海报" />}
+            <button className="secondary-button" disabled={processing} onClick={() => visualPosterRef.current?.click()}>
+              <ImageUp size={18} /> {poster ? "更换原始海报" : "选择海报"}
+            </button>
+            <input ref={visualPosterRef} type="file" className="visually-hidden" accept="image/jpeg,image/png,image/webp"
+              onChange={(event) => { void uploadPoster(event.target.files?.[0]); event.target.value = ""; }} />
+            {replacementPending && <p className="form-warning">新海报尚未保存。请检查裁剪预览后再保存修改。</p>}
+          </div>
+          <EventDataVisualEditor data={visualDraft} onChange={changeVisualDraft} />
+          <button className="secondary-button" onClick={applyVisualDraft}>验证并预览可视化修改</button>
+        </div>
+      )}
       </div>
       {error && (
         <p className="form-error" role="alert">
@@ -624,6 +689,12 @@ export function ImportBottomSheet({
                         ? `${group.start_time}–${group.end_time}`
                         : "时间待核对"}
                     </small>
+                    {group.benefit_type === "final" && <small>终特</small>}
+                    {group.benefit_type === "normal" && (
+                      <small>特典 {group.benefit_time_start && group.benefit_time_end
+                        ? `${group.benefit_time_start}–${group.benefit_time_end}`
+                        : "时间待核对"}</small>
+                    )}
                   </div>
                 </div>
               ))}

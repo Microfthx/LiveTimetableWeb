@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Server } from "node:http";
+import sharp from "sharp";
 import { demoData } from "../src/data/demo";
 import { createActivitiesServer } from "./activitiesServer";
 
@@ -12,7 +13,8 @@ let base: string;
 let cookie = "";
 const key = "test-admin-access-key";
 const secret = "test-admin-session-secret-with-at-least-32-characters";
-const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==";
+let image: string;
+let otherImage: string;
 
 async function listen() {
   server = await createActivitiesServer({ dataDir: directory, adminAccessKey: key, adminSessionSecret: secret });
@@ -32,6 +34,8 @@ const request = (path: string, method = "GET", body?: unknown, authenticated = t
 });
 
 beforeAll(async () => {
+  image = `data:image/png;base64,${(await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer()).toString("base64")}`;
+  otherImage = `data:image/png;base64,${(await sharp({ create: { width: 2, height: 2, channels: 3, background: "blue" } }).png().toBuffer()).toString("base64")}`;
   directory = await mkdtemp(join(tmpdir(), "live-idol-activities-test-"));
   await writeFile(join(directory, "state.json"), JSON.stringify({ revision: 3, data: demoData, images: {} }));
   await listen();
@@ -61,7 +65,6 @@ it("migrates the old shared event and blocks unauthenticated writes", async () =
 });
 
 it("persists separate display and crop assets while keeping old poster fallback", async () => {
-  const otherImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l3sAAAAASUVORK5CYII=";
   const createdResponse = await request("/api/admin/activities", "POST", { city: "福州", data: demoData, poster: image, cropSource: otherImage });
   expect(createdResponse.status).toBe(201);
   const created = await createdResponse.json();
@@ -104,6 +107,43 @@ it("creates, validates, replaces poster, and deletes without exposing disk paths
   expect((await request(`/api/admin/activities/${created.id}`, "DELETE")).status).toBe(200);
   expect((await request(`/api/activities/${created.id}`)).status).toBe(404);
   expect((await request(edited.posterUrl)).status).toBe(404);
+});
+
+it("serves persisted WebP cover thumbnails and regenerates missing old thumbnails", async () => {
+  const original = await sharp({ create: { width: 1200, height: 1600, channels: 3, background: "#d9438a" } }).png().toBuffer();
+  const createdResponse = await request("/api/admin/activities", "POST", {
+    city: "杭州", data: demoData, poster: `data:image/png;base64,${original.toString("base64")}`,
+  });
+  expect(createdResponse.status).toBe(201);
+  const created = await createdResponse.json();
+  expect(created.thumbnailUrl).toMatch(new RegExp(`^/api/activities/${created.id}/thumbnail\\?v=`));
+  expect(JSON.stringify(created)).not.toContain("thumb.webp");
+  const metadataOnly = await (await request(`/api/admin/activities/${created.id}`, "PATCH", { city: "苏州", data: demoData })).json();
+  expect(metadataOnly.thumbnailUrl).toBe(created.thumbnailUrl);
+  expect(metadataOnly.posterUrl).toBe(created.posterUrl);
+  const thumbnailResponse = await request(created.thumbnailUrl);
+  expect(thumbnailResponse.status).toBe(200);
+  expect(thumbnailResponse.headers.get("content-type")).toBe("image/webp");
+  expect(thumbnailResponse.headers.get("cache-control")).toContain("immutable");
+  const thumbnail = Buffer.from(await thumbnailResponse.arrayBuffer());
+  const metadata = await sharp(thumbnail).metadata();
+  expect(metadata.width).toBe(320);
+  expect(metadata.height).toBeLessThanOrEqual(480);
+  expect(thumbnail.length).toBeLessThan(original.length);
+  const posterDir = join(directory, "posters");
+  const thumbnailFilename = (await readdir(posterDir)).find((name) => name.startsWith(created.id) && name.endsWith(".thumb.webp"));
+  expect(thumbnailFilename).toBeDefined();
+  await unlink(join(posterDir, thumbnailFilename!));
+  await new Promise<void>((done) => server.close(() => done()));
+  await listen();
+  const regenerated = await request(created.thumbnailUrl);
+  expect(regenerated.status).toBe(200);
+  expect(Buffer.from(await regenerated.arrayBuffer())).toEqual(thumbnail);
+  expect(await readdir(posterDir)).toContain(thumbnailFilename);
+  const login = await request("/api/admin/login", "POST", { key });
+  cookie = login.headers.get("set-cookie")!.split(";")[0];
+  expect((await request(`/api/admin/activities/${created.id}`, "DELETE")).status).toBe(200);
+  expect((await readdir(posterDir)).filter((name) => name.startsWith(created.id))).toEqual([]);
 });
 
 it("keeps the migrated event after restart and invalidates logout cookie", async () => {

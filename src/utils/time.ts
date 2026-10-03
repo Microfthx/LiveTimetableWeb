@@ -1,4 +1,5 @@
 import type {
+  BenefitStatus,
   EventData,
   IdolGroup,
   PerformanceStatus,
@@ -86,6 +87,36 @@ export function getPerformanceStatus(
   if (now >= start) return "live";
   if (group.id === nextId) return "next";
   return "upcoming";
+}
+
+/** Benefit times are explicit clock times and are independent of live delay. */
+export function getBenefitWindow(
+  data: EventData,
+  group: IdolGroup,
+): { start: Date; end: Date } | null {
+  if (group.benefit_type !== "normal") return null;
+  const startClock = parseTime(group.benefit_time_start ?? "");
+  const endClock = parseTime(group.benefit_time_end ?? "");
+  if (!Number.isFinite(startClock) || !Number.isFinite(endClock) || startClock === endClock)
+    return null;
+  const groupWindow = getGroupWindow(data, group, false);
+  const base = eventMidnight(data);
+  // A post-midnight performance has its benefit on the same event day unless
+  // the benefit clock has also wrapped into the following day.
+  const nextDay = groupWindow && groupWindow.start.getDate() !== base.getDate() &&
+    startClock < parseTime(data.event.start_time ?? "00:00");
+  const startMinute = startClock + (nextDay ? DAY_MINUTES : 0);
+  let endMinute = endClock + (nextDay ? DAY_MINUTES : 0);
+  if (endMinute <= startMinute) endMinute += DAY_MINUTES;
+  return { start: addMinutes(base, startMinute), end: addMinutes(base, endMinute) };
+}
+
+export function getBenefitStatus(data: EventData, group: IdolGroup, now: Date): BenefitStatus {
+  const window = getBenefitWindow(data, group);
+  if (!window) return "none";
+  if (now < window.start) return "upcoming";
+  if (now < window.end) return "ongoing";
+  return "ended";
 }
 
 export function getPerformanceProgress(

@@ -4,6 +4,8 @@ import type { EventData } from "../types/timetable";
 import { demoData } from "../data/demo";
 import {
   getCurrentPerformance,
+  getBenefitStatus,
+  getBenefitWindow,
   getEffectiveTime,
   getNextPerformance,
   getPerformanceProgress,
@@ -79,6 +81,28 @@ describe("performance timeline", () => {
       "FZI*TWO",
     );
   });
+
+  it("keeps benefit status independent from performance delay", () => {
+    const group = { ...data.groups[0], benefit_type: "normal" as const,
+      benefit_time_start: "14:20", benefit_time_end: "15:00" };
+    const activity = { ...data, groups: [group] };
+    expect(getBenefitStatus(activity, group, at(14, 19))).toBe("upcoming");
+    expect(getBenefitStatus(activity, group, at(14, 20))).toBe("ongoing");
+    expect(getBenefitStatus(activity, group, at(15, 0))).toBe("ended");
+    expect(getBenefitWindow(activity, group)?.start.getMinutes()).toBe(20);
+    expect(getEffectiveTime(activity, group)?.start.getMinutes()).toBe(15);
+    expect(getBenefitStatus(activity, { ...group, benefit_type: "final" }, at(14, 30)))
+      .toBe("none");
+  });
+
+  it("places a post-midnight benefit on the performance's next calendar day", () => {
+    const group = { ...data.groups[0], start_time: "00:10", end_time: "00:30",
+      benefit_type: "normal" as const, benefit_time_start: "00:40", benefit_time_end: "01:10" };
+    const night = { ...data, delay_minutes: 0,
+      event: { ...data.event, start_time: "23:00" }, groups: [group] };
+    expect(getBenefitWindow(night, group)?.start.getDate()).toBe(2);
+    expect(getBenefitStatus(night, group, new Date(2026, 9, 2, 0, 50))).toBe("ongoing");
+  });
 });
 
 describe("OCR JSON validation", () => {
@@ -135,6 +159,20 @@ describe("OCR JSON validation", () => {
       height: 0,
     });
     expect(normalized.groups[0].image_base64).toBe("YQ==");
+    expect(normalized.groups[0].benefit_type).toBe("none");
+  });
+
+  it("preserves normal, final and missing benefit information", () => {
+    const groups = [
+      { ...demoData.groups[0], benefit_type: "normal", benefit_time_start: "14:20", benefit_time_end: "15:00" },
+      { ...demoData.groups[1], benefit_type: "final", benefit_time_start: "", benefit_time_end: "" },
+      demoData.groups[2],
+    ];
+    const parsed = validateEventData({ ...demoData, groups });
+    expect(parsed.groups.map((group) => group.benefit_type)).toEqual(["normal", "final", "none"]);
+    expect(parsed.groups[0].benefit_time_start).toBe("14:20");
+    expect(() => validateEventData({ ...demoData, groups: [{ ...groups[0], benefit_time_start: "25:00" }] }))
+      .toThrow("HH:mm");
   });
 
   it("accepts fenced JSON but rejects broken syntax without changing data", () => {
@@ -212,6 +250,7 @@ describe("OCR JSON validation", () => {
     expect(OCR_PROMPT).toContain('"poster": {');
     expect(OCR_PROMPT).toContain('"crop": {');
     expect(OCR_PROMPT).toContain('"city": ""');
+    expect(OCR_PROMPT).toContain('"benefit_type": "none"');
     expect(OCR_PROMPT).toContain(String(new Date().getFullYear()));
     expect(OCR_PROMPT).toContain("只输出合法 JSON。");
     const mirror = readFileSync(

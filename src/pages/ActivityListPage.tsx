@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowRight, Cloud, Sparkles, Star } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Cloud, Sparkles, Star, X } from "lucide-react";
 import type { ActivityRecord } from "../types/activity";
 import { EventCard } from "../components/EventCard";
 import { useCurrentTime } from "../hooks/useCurrentTime";
@@ -15,6 +15,23 @@ export function ActivityListPage() {
   const [tab, setTab] = useState<Tab>("recent");
   const [city, setCity] = useState("");
   const [retry, setRetry] = useState(0);
+  const [selectedPoster, setSelectedPoster] = useState<ActivityRecord | null>(null);
+  const [posterFailed, setPosterFailed] = useState(false);
+  const closePosterButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!selectedPoster) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closePosterButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedPoster(null); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [selectedPoster]);
   const now = useCurrentTime();
   useEffect(() => {
     let active = true;
@@ -39,7 +56,7 @@ export function ActivityListPage() {
   const section = (title: string, subtitle: string, records: ActivityRecord[], empty: string) => (
     <section className="activity-section">
       <div className="activity-section-heading"><span>{title}</span><h2>{subtitle}</h2></div>
-      {records.length ? <div className="event-grid">{records.map((item) => <EventCard key={item.id} activity={item} now={now} />)}</div>
+      {records.length ? <div className="event-grid">{records.map((item) => <EventCard key={item.id} activity={item} now={now} onPosterOpen={(activity) => { setPosterFailed(false); setSelectedPoster(activity); }} />)}</div>
         : <div className="activity-empty"><Star size={22} /><p>{empty}</p></div>}
     </section>
   );
@@ -81,6 +98,17 @@ export function ActivityListPage() {
                 : section(tab === "upcoming" ? "UPCOMING" : "ENDED", tab === "upcoming" ? "即将到来" : "已结束", [], tab === "upcoming" ? "还没有更多活动" : "暂无历史活动")}
       </main>
       <footer className="activity-home-footer"><a href="/admin">管理入口</a></footer>
+      {selectedPoster?.posterUrl && <div className="poster-viewer-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedPoster(null); }}>
+        <section className="poster-viewer" role="dialog" aria-modal="true" aria-label={`${selectedPoster.data.event.title}海报原图`}>
+          <div className="poster-viewer-heading">
+            <h2>{selectedPoster.data.event.title} · 海报原图</h2>
+            <button ref={closePosterButton} className="poster-viewer-close" type="button" onClick={() => setSelectedPoster(null)} aria-label="关闭原图"><X size={22} /></button>
+          </div>
+          <div className="poster-viewer-image">
+            {posterFailed ? <p role="alert">原图加载失败，请稍后重试。</p> : <img src={selectedPoster.posterUrl} alt={`${selectedPoster.data.event.title}海报原图`} onError={() => setPosterFailed(true)} />}
+          </div>
+        </section>
+      </div>}
     </div>
   );
 }

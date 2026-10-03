@@ -13,6 +13,7 @@ import {
 import type { EventData, IdolGroup } from "../types/timetable";
 import {
   formatTime,
+  getBenefitStatus,
   getEffectiveTime,
   getGroupWindow,
   getPerformanceProgress,
@@ -338,8 +339,11 @@ export function TimetableList({
           const original = getGroupWindow(data, group, false);
           const effective = getEffectiveTime(data, group);
           const status = getPerformanceStatus(data, group, now, nextId);
+          const benefitStatus = getBenefitStatus(data, group, now);
+          const mainStatus = benefitStatus === "ongoing" ? "benefit"
+            : benefitStatus === "ended" ? "benefit-ended" : status;
           return (
-            <div className={`timeline-row row-${status}`} key={group.id}>
+            <div className={`timeline-row row-${mainStatus}`} key={group.id}>
               {original ? (
                 <time
                   className="timeline-time"
@@ -354,33 +358,36 @@ export function TimetableList({
               <GroupImage group={group} className="timeline-image" />
               <div className="timeline-copy">
                 <strong>{group.name}</strong>
-                <small>
+                <span className="timeline-show-time">
+                  <span className="timeline-line-label">演出</span>
                   {!original || !effective ? (
                     "时间待核对"
-                  ) : data.delay_minutes === 0 ? (
-                    `${formatTime(original.start)} – ${formatTime(original.end)}`
                   ) : (
-                    <>
-                      原定 {formatTime(original.start)} –{" "}
-                      {formatTime(original.end)} <ArrowRight size={12} />{" "}
-                      <b>
-                        {formatTime(effective.start)} –{" "}
-                        {formatTime(effective.end)}
-                      </b>
-                    </>
+                    `${formatTime(effective.start)} – ${formatTime(effective.end)}`
                   )}
-                </small>
+                </span>
+                {original && data.delay_minutes !== 0 && (
+                  <span className="timeline-original-time">
+                    原定 {formatTime(original.start)} – {formatTime(original.end)}
+                  </span>
+                )}
+                {group.benefit_type === "final" ? (
+                  <span className="timeline-benefit timeline-benefit-final">☆ 终特</span>
+                ) : group.benefit_type === "normal" && (
+                  <span className="timeline-benefit">
+                    特典 {group.benefit_time_start && group.benefit_time_end
+                      ? `${group.benefit_time_start} – ${group.benefit_time_end}`
+                      : "时间待核对"}
+                  </span>
+                )}
               </div>
-              <span className={`status-badge status-${status}`}>
-                {status === "finished"
-                  ? "✓ FINISHED"
-                  : status === "live"
-                    ? "● LIVE"
-                    : status === "next"
-                      ? "NEXT"
-                      : status === "unscheduled"
-                        ? "待核对"
-                        : "UPCOMING"}
+              <span className={`status-badge status-${mainStatus}`}>
+                {mainStatus === "finished" ? "演出结束"
+                  : mainStatus === "live" ? "● 演出中"
+                  : mainStatus === "benefit" ? "平特中"
+                  : mainStatus === "benefit-ended" ? "平特结束"
+                  : mainStatus === "next" ? "NEXT"
+                  : mainStatus === "unscheduled" ? "待核对" : "UPCOMING"}
               </span>
             </div>
           );

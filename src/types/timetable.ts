@@ -22,6 +22,9 @@ export interface IdolGroup {
   name: string;
   start_time: string;
   end_time: string;
+  benefit_type?: "normal" | "final" | "none";
+  benefit_time_start?: string;
+  benefit_time_end?: string;
   image_base64: string;
   image_mime: string;
   crop?: CropRegion;
@@ -45,3 +48,5 @@ export interface EventData {
 
 export type PerformanceStatus =
   "finished" | "live" | "next" | "upcoming" | "unscheduled";
+
+export type BenefitStatus = "upcoming" | "ongoing" | "ended" | "none";

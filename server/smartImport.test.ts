@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { aiInputParts, recognizeEvent, EVENT_DATA_SCHEMA } from "./aiImport";
+import { aiInputParts, recognizeEvent, AI_IMPORT_SCHEMA, EVENT_DATA_SCHEMA } from "./aiImport";
 import {
   createWeiboStore,
   parseCookieHeader,
@@ -186,18 +186,34 @@ it("uses text alone, a shared image once, or two explicitly labeled images", asy
   expect(aiInputParts(null, null, "14:00 Gara")).toHaveLength(1);
   expect(
     aiInputParts(picture, picture, "").filter(
-      (part) => part.type === "input_image",
+      (part) => part.type === "image_url",
     ),
   ).toHaveLength(1);
   expect(
     aiInputParts(picture, { ...picture }, "正文").filter(
-      (part) => part.type === "input_image",
+      (part) => part.type === "image_url",
     ),
   ).toHaveLength(2);
+  expect(
+    aiInputParts(null, null, "正文时间表", picture).filter(
+      (part) => part.type === "image_url",
+    ),
+  ).toHaveLength(1);
+  expect(JSON.stringify(aiInputParts(null, null, "正文时间表", picture)))
+    .toContain("IMAGE C = ACTIVITY POSTER / CITY CONTEXT");
+  expect(
+    aiInputParts(picture, picture, "", picture).filter(
+      (part) => part.type === "image_url",
+    ),
+  ).toHaveLength(1);
   const labeled = JSON.stringify(aiInputParts(picture, { ...picture }, "正文"));
   expect(labeled).toContain("IMAGE A = TIMETABLE SOURCE");
   expect(labeled).toContain("IMAGE B = GROUP VISUAL / CROP SOURCE");
   expect(JSON.stringify(EVENT_DATA_SCHEMA)).not.toContain("city");
+  expect(AI_IMPORT_SCHEMA.properties.city).toEqual({ type: "string" });
+  expect(AI_IMPORT_SCHEMA.required).toContain("city");
+  expect(EVENT_DATA_SCHEMA.properties.groups.items.required).toContain("benefit_type");
+  expect(EVENT_DATA_SCHEMA.properties.groups.items.required).toContain("benefit_time_start");
   await expect(
     recognizeEvent({
       timetable: null,
@@ -206,4 +222,68 @@ it("uses text alone, a shared image once, or two explicitly labeled images", asy
       mode: "normal",
     }),
   ).rejects.toMatchObject({ code: "AI_NOT_CONFIGURED" });
+});
+
+it("recognizes city beside EventData in one strict OpenRouter request", async () => {
+  const picture = { bytes: tinyPng, mime: "image/png", width: 1, height: 1 };
+  const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
+  const fakeFetch = (async (url: URL | RequestInfo, init?: RequestInit) => {
+    requests.push({
+      url: String(url),
+      headers: new Headers(init?.headers),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({
+        schema_version: "1.0",
+        city: "厦门",
+        event: { title: "测试活动", date: "2026-10-02", venue: "测试场地", doors_time: "", start_time: "14:00" },
+        delay_minutes: 0,
+        poster: { width: 0, height: 0 },
+        groups: [{ id: "group_001", name: "Gara", start_time: "14:00", end_time: "14:20", benefit_type: "normal", benefit_time_start: "14:30", benefit_time_end: "15:00", crop: { x: 0, y: 0, width: 1, height: 1 } }],
+      }) } }],
+      usage: { prompt_tokens: 10, completion_tokens: 20 },
+    }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const result = await recognizeEvent({
+    timetable: picture, crop: picture, cover: { ...picture }, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "google/gemini-2.5-flash", fetchImpl: fakeFetch,
+  });
+  expect(requests).toHaveLength(1);
+  expect(requests[0].url).toBe("https://openrouter.ai/api/v1/chat/completions");
+  expect(requests[0].headers.get("Authorization")).toBe("Bearer test-secret");
+  expect(requests[0].body.model).toBe("google/gemini-2.5-flash");
+  expect(requests[0].body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true, schema: AI_IMPORT_SCHEMA } });
+  expect(requests[0].body.provider).toEqual({ require_parameters: true });
+  const content = (requests[0].body.messages as Array<{ content: Array<{ type: string; text?: string }> }>)[1].content;
+  expect(content.filter((part) => part.type === "image_url")).toHaveLength(2);
+  expect(JSON.stringify(content)).toContain("IMAGE C = ACTIVITY POSTER / CITY CONTEXT");
+  expect(JSON.stringify(requests[0].body)).not.toContain("test-secret");
+  expect(result.data.poster).toEqual({ width: 1, height: 1 });
+  expect(result.data.groups[0].name).toBe("Gara");
+  expect(result.data.groups[0].benefit_time_start).toBe("14:30");
+  expect(result.city).toBe("厦门");
+  expect(result.data).not.toHaveProperty("city");
+});
+
+it("reports OpenRouter credit errors without changing import data", async () => {
+  const fakeFetch = (async () => new Response("{}", { status: 402 })) as typeof fetch;
+  await expect(recognizeEvent({
+    timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "google/gemini-2.5-flash", fetchImpl: fakeFetch,
+  })).rejects.toMatchObject({ code: "AI_CREDITS_REQUIRED", message: "OpenRouter 额度不足，请检查账户余额。" });
+});
+
+it("distinguishes a provider restriction from an invalid OpenRouter key", async () => {
+  const fakeFetch = (async () => new Response(JSON.stringify({ error: {
+    code: 403,
+    message: "The request is prohibited due to a violation of provider Terms Of Service.",
+  } }), { status: 403 })) as typeof fetch;
+  await expect(recognizeEvent({
+    timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "openai/gpt-5.6-luna", fetchImpl: fakeFetch,
+  })).rejects.toMatchObject({
+    code: "AI_PROVIDER_RESTRICTED",
+    message: "OpenRouter 拒绝访问所选模型，请检查账户或模型提供方的访问限制。",
+  });
 });

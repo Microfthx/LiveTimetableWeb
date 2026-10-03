@@ -1,9 +1,10 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { imageSize } from "image-size";
+import sharp from "sharp";
 import type { ActivityRecord } from "../src/types/activity.js";
 import { validateEventData } from "../src/utils/validation.js";
 import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
@@ -89,10 +90,14 @@ function publicActivity(activity: StoredActivity): ActivityRecord {
   const { posterFilename: _posterFilename, cropSourceFilename: _cropSourceFilename, ...rest } = activity;
   void _posterFilename;
   void _cropSourceFilename;
+  const posterVersion = activity.posterFilename && createHash("sha256").update(activity.posterFilename).digest("hex").slice(0, 16);
+  const cropVersion = (activity.cropSourceFilename || activity.posterFilename)
+    && createHash("sha256").update(activity.cropSourceFilename || activity.posterFilename!).digest("hex").slice(0, 16);
   return {
     ...rest,
-    ...(activity.posterFilename ? { posterUrl: `/api/activities/${activity.id}/poster?v=${encodeURIComponent(activity.updatedAt)}` } : {}),
-    ...(activity.cropSourceFilename || activity.posterFilename ? { cropSourceUrl: `/api/activities/${activity.id}/crop-source?v=${encodeURIComponent(activity.updatedAt)}` } : {}),
+    ...(posterVersion ? { posterUrl: `/api/activities/${activity.id}/poster?v=${posterVersion}` } : {}),
+    ...(posterVersion ? { thumbnailUrl: `/api/activities/${activity.id}/thumbnail?v=${posterVersion}` } : {}),
+    ...(cropVersion ? { cropSourceUrl: `/api/activities/${activity.id}/crop-source?v=${cropVersion}` } : {}),
     cropSourceSeparate: !!activity.cropSourceFilename && activity.cropSourceFilename !== activity.posterFilename,
   };
 }
@@ -120,6 +125,28 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
   const storePath = join(dataDir, "activities.json");
   const posterDir = join(dataDir, "posters");
   await mkdir(posterDir, { recursive: true });
+  const thumbnailJobs = new Map<string, Promise<void>>();
+  const thumbnailName = (filename: string) => filename.replace(/\.(jpg|png|webp)$/, ".thumb.webp");
+  async function ensureThumbnail(filename: string) {
+    const target = join(posterDir, thumbnailName(filename));
+    try { await access(target); return; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const existing = thumbnailJobs.get(filename);
+    if (existing) return existing;
+    const job = (async () => {
+      const temporary = `${target}-${randomUUID()}.tmp`;
+      try {
+        await sharp(join(posterDir, filename)).rotate().resize(320, 480, { fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 76, effort: 4 }).toFile(temporary);
+        await rename(temporary, target);
+      } catch (error) {
+        try { await unlink(temporary); } catch { /* no temporary file */ }
+        throw error;
+      }
+    })();
+    thumbnailJobs.set(filename, job);
+    try { await job; } finally { thumbnailJobs.delete(filename); }
+  }
   const weiboStore = createWeiboStore(dataDir);
   let activities: StoredActivity[];
   try {
@@ -151,6 +178,13 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     }
     await writeFile(storePath, JSON.stringify(activities), { flag: "wx" });
   }
+  // Backfill posters saved before thumbnail support without delaying server startup.
+  void (async () => {
+    for (const filename of new Set(activities.map((item) => item.posterFilename).filter((name): name is string => !!name))) {
+      try { await ensureThumbnail(filename); }
+      catch (error) { console.error("Poster thumbnail backfill failed", filename, error); }
+    }
+  })();
 
   let queue: Promise<unknown> = Promise.resolve();
   function exclusive<T>(action: () => Promise<T>): Promise<T> {
@@ -193,22 +227,29 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
       catch { throw new HttpError(403, "请求来源无效。"); }
     }
   }
-  async function writePoster(id: string, value: unknown): Promise<string> {
+  async function writePoster(id: string, value: unknown, thumbnail = false): Promise<string> {
     const image = posterFrom(value);
     const filename = `${id}-${randomUUID()}.${image.extension}`;
     await writeFile(join(posterDir, filename), image.bytes, { flag: "wx" });
+    if (thumbnail) {
+      try { await ensureThumbnail(filename); }
+      catch { await removePoster(filename); throw new HttpError(400, "无法处理海报图片，请重新选择有效图片。"); }
+    }
     return filename;
   }
   async function removePoster(filename?: string) {
     if (!filename) return;
-    try { await unlink(join(posterDir, filename)); }
-    catch (error) { console.error("Poster cleanup failed", error); }
+    try { await thumbnailJobs.get(filename); } catch { /* cleanup continues after a failed render */ }
+    for (const name of [filename, thumbnailName(filename)]) {
+      try { await unlink(join(posterDir, name)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("Poster cleanup failed", error); }
+    }
   }
   async function writeActivityImages(id: string, input: Record<string, unknown>) {
     let posterFilename: string | undefined;
     let cropSourceFilename: string | undefined;
     try {
-      if (input.poster !== undefined) posterFilename = await writePoster(id, input.poster);
+      if (input.poster !== undefined) posterFilename = await writePoster(id, input.poster, true);
       if (input.cropSource !== undefined) {
         cropSourceFilename = input.cropSource === input.poster && posterFilename
           ? posterFilename : await writePoster(id, input.cropSource);
@@ -270,6 +311,14 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         await streamImage(response, join(posterDir, activity.posterFilename), extension === "jpg" ? "image/jpeg" : `image/${extension}`);
         return;
       }
+      const thumbnailPath = new RegExp(`^/api/activities/(${ID_PATTERN})/thumbnail$`).exec(path);
+      if (method === "GET" && thumbnailPath) {
+        const activity = activities.find((item) => item.id === thumbnailPath[1]);
+        if (!activity?.posterFilename) throw new HttpError(404, "海报不存在。");
+        await ensureThumbnail(activity.posterFilename);
+        await streamImage(response, join(posterDir, thumbnailName(activity.posterFilename)), "image/webp", true);
+        return;
+      }
       const cropPath = new RegExp(`^/api/activities/(${ID_PATTERN})/crop-source$`).exec(path);
       if (method === "GET" && cropPath) {
         const activity = activities.find((item) => item.id === cropPath[1]);
@@ -288,7 +337,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
       if (method === "GET" && path === "/api/admin/session") { sendJson(response, 200, { authenticated: !!sessionId(request) }); return; }
       if (method === "GET" && path === "/api/admin/ai/status") {
         requireAdmin(request);
-        sendJson(response, 200, { configured: !!(process.env.OPENAI_API_KEY && process.env.OPENAI_OCR_MODEL) }); return;
+        sendJson(response, 200, { configured: !!(process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_OCR_MODEL) }); return;
       }
       const importAssetPath = /^\/api\/admin\/weibo\/import-assets\/([a-f0-9-]{36})\/(image_\d{3})$/.exec(path);
       if (method === "GET" && importAssetPath) {
@@ -345,11 +394,15 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         const timetable = await aiSource(input.timetableSource);
         const crop = input.cropSource === undefined || JSON.stringify(input.cropSource) === JSON.stringify(input.timetableSource)
           ? timetable : await aiSource(input.cropSource);
+        const cover = input.coverSource === undefined || input.coverSource === null ? null
+          : JSON.stringify(input.coverSource) === JSON.stringify(input.timetableSource) ? timetable
+          : JSON.stringify(input.coverSource) === JSON.stringify(input.cropSource) ? crop
+          : await aiSource(input.coverSource);
         const result = await recognizeEvent({
-          timetable, crop, postText: String(input.weiboText ?? ""), mode: input.mode,
-          apiKey: process.env.OPENAI_API_KEY,
-          normalModel: process.env.OPENAI_OCR_MODEL,
-          highModel: process.env.OPENAI_OCR_MODEL_HIGH,
+          timetable, crop, cover, postText: String(input.weiboText ?? ""), mode: input.mode,
+          apiKey: process.env.OPENROUTER_API_KEY,
+          normalModel: process.env.OPENROUTER_OCR_MODEL,
+          highModel: process.env.OPENROUTER_OCR_MODEL_HIGH,
         });
         sendJson(response, 200, result);
         return;

@@ -92,13 +92,16 @@ export const parseWeibo = (url: string, cookie: string) => request<WeiboImportPo
 export async function recognizeTimetable(input: {
   timetableSource: AiSource | null;
   cropSource: AiSource | null;
+  coverSource?: AiSource | null;
   weiboText: string;
   mode: "normal" | "high";
 }) {
-  return request<{ data: EventData; warnings: string[]; model: string; mode: "normal" | "high" }>(
+  return request<{ data: EventData; city: string; warnings: string[]; model: string; mode: "normal" | "high" }>(
     "/api/admin/ai/parse-poster", "POST", {
       timetableSource: await sourcePayload(input.timetableSource),
       cropSource: input.cropSource === input.timetableSource ? undefined : await sourcePayload(input.cropSource),
+      coverSource: input.coverSource && input.coverSource !== input.timetableSource && input.coverSource !== input.cropSource
+        ? await sourcePayload(input.coverSource) : undefined,
       weiboText: input.weiboText,
       mode: input.mode,
     },

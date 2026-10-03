@@ -23,6 +23,9 @@
       "name": "FZI*TWO",
       "start_time": "14:00",
       "end_time": "14:10",
+      "benefit_type": "normal",
+      "benefit_time_start": "14:20",
+      "benefit_time_end": "15:00",
       "crop": { "x": 0.13, "y": 0.37, "width": 0.2, "height": 0.11 }
     }
   ]
@@ -47,6 +50,8 @@
 | `groups[].name` | string | 必填，非空。 |
 | `groups[].start_time` | string | 必填，`HH:mm` 或 `""`（OCR 无法确定）；始终表示**原始**时间。空时间放在时间轴末尾并提示核对。 |
 | `groups[].end_time` | string | 必填，`HH:mm` 或 `""`；时长确定时必须大于 0 且不超过 12 小时。 |
+| `groups[].benefit_type` | `normal` \| `final` \| `none` | OCR 输出必填；旧活动可省略，按 `none` 显示。`normal` 表示有明确的普通特典时间，`final` 表示只标注“终特”，`none` 表示没有可靠特典信息。 |
+| `groups[].benefit_time_start`, `groups[].benefit_time_end` | string | OCR 输出必填，分别为 `HH:mm` 或 `""`。`normal` 时从来源提取明确时间，不得从演出时间推断；`final` / `none` 时写空字符串。旧活动可省略。单侧缺失只提示核对，不影响演出时间。 |
 | `groups[].image_base64` | string | 可选，缺失等同 `""`。只放纯 Base64，不放 `data:` 前缀。空值显示占位图。 |
 | `groups[].image_mime` | string | 可选，默认 `image/jpeg`；支持 `image/jpeg`、`image/png`、`image/webp`、`image/gif`。 |
 | `groups[].crop` | object | OCR 输出必填；旧版手工 JSON 可省略。`x`,`y`,`width`,`height` 是相对于**原始上传海报的 naturalWidth / naturalHeight** 的 0–1 坐标。四项全为 0 表示无法确定，显示占位图；有效矩形的宽高必须大于 0 且不可越界。 |
@@ -56,6 +61,7 @@
 ## 时间语义
 
 - `start_time` / `end_time` 永远是海报上的原始排程，**不能因现场延迟而改写**。
+- 特典时间是独立的原始时段，不从演出时间推断；`delay_minutes` 仅调整演出时段，特典时间保持其明确标注的钟点。`benefit_status` 是网页根据当前时刻计算的 `upcoming` / `ongoing` / `ended` / `none`，不写入 OCR JSON 或数据库。列表只有一个主状态：普通特典进行中显示“平特中”，结束后显示“平特结束”；其余按演出进度显示 `UPCOMING`、`NEXT`、“演出中”或“演出结束”。
 - 实际显示和状态判断使用 `effective_time = original_time + delay_minutes`。当前演出、下一组、进度、倒计时均依此计算。
 - 时间区间左闭右开：`effectiveStart <= now < effectiveEnd` 为 `LIVE`；结束时刻开始为 `FINISHED`。
 - 跨午夜时，以 `event.date + event.start_time` 为锚点。比活动开始钟点早的团体时间视为次日；例如活动 23:00 开始、团体 00:05 开始表示次日 00:05。`end_time` 早于 `start_time` 表示该组跨午夜；相等则无效。省略 `event.start_time` 时以当日 00:00 为锚点，因此跨午夜活动必须提供它。
@@ -70,6 +76,7 @@
 4. `id` 从 `group_001` 按演出时间连续编号；无法识别的字段留空，不编造。
 5. `delay_minutes` 固定为 0；`poster` 放真实输入图片像素尺寸，不知道时宽高都写 0。
 6. 每组必须带 `crop`；无法确定时四项全写 0。OCR 不输出图片 Base64，由网页裁剪。
+7. 每组输出 `benefit_type` 和两个特典时间字段：明确的普通特典时段用 `normal` + 起止时间，只有“终特”用 `final` + 两个空字符串，无可靠信息用 `none` + 两个空字符串。不要推测特典时段，也不要把特典会识别为演出团体。
 
 完整 Prompt 的唯一文本位于仓库根目录 `json生成prompt.txt`，`src/constants/ocrPrompt.ts` 在运行时填入当前年份。更改 Prompt、网页或后端之前，先更新此协议。
 

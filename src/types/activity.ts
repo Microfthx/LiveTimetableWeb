@@ -5,6 +5,8 @@ export interface ActivityRecord {
   id: string;
   city: string;
   posterUrl?: string;
+  /** Persisted, lightweight cover for activity lists. */
+  thumbnailUrl?: string;
   /** Source for normalized group crops; old records fall back to posterUrl. */
   cropSourceUrl?: string;
   cropSourceSeparate?: boolean;

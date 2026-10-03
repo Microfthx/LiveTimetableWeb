@@ -154,6 +154,30 @@ export function validateEventDataDetailed(input: unknown): {
       const name = requiredString(raw.name, `${label}.name`);
       const start_time = clock(raw.start_time, `${label}.start_time`, true);
       const end_time = clock(raw.end_time, `${label}.end_time`, true);
+      const benefitTypeRaw = raw.benefit_type;
+      if (benefitTypeRaw !== undefined &&
+        !["normal", "final", "none"].includes(benefitTypeRaw as string))
+        throw new ImportError(`${label}.benefit_type 必须是 normal、final 或 none。`);
+      const benefit_time_start = raw.benefit_time_start === undefined
+        ? "" : clock(raw.benefit_time_start, `${label}.benefit_time_start`, true);
+      const benefit_time_end = raw.benefit_time_end === undefined
+        ? "" : clock(raw.benefit_time_end, `${label}.benefit_time_end`, true);
+      const benefit_type = (benefitTypeRaw ??
+        (benefit_time_start || benefit_time_end ? "normal" : "none")) as IdolGroup["benefit_type"];
+      if (benefit_type === "normal") {
+        if (!benefit_time_start || !benefit_time_end)
+          warnings.push(`${name} 的特典时间不完整，请人工核对`);
+        if (benefit_time_start && benefit_time_end) {
+          if (benefit_time_start === benefit_time_end)
+            throw new ImportError(`${name} 的特典结束时间必须晚于开始时间。`);
+          let benefitDuration = parseTime(benefit_time_end) - parseTime(benefit_time_start);
+          if (benefitDuration < 0) benefitDuration += 1440;
+          if (benefitDuration > 720)
+            throw new ImportError(`${name} 的特典时长不能超过 12 小时，请核对时间。`);
+        }
+      } else if (benefit_time_start || benefit_time_end) {
+        warnings.push(`${name} 的特典类型与时间不一致；终特或无特典不会显示时间`);
+      }
       if (!start_time || !end_time)
         warnings.push(`${name} 的演出时间不完整，已放在待核对区域`);
       if (start_time && end_time) {
@@ -197,6 +221,9 @@ export function validateEventDataDetailed(input: unknown): {
         name,
         start_time,
         end_time,
+        benefit_type,
+        benefit_time_start,
+        benefit_time_end,
         image_base64,
         image_mime,
         crop: checkedCrop.crop,

@@ -165,7 +165,7 @@ export function AdminPage() {
       <div className="admin-filters"><input aria-label="搜索活动" placeholder="搜索活动或场地" value={search} onChange={(event) => setSearch(event.target.value)} />
         <select aria-label="筛选城市" value={cityFilter} onChange={(event) => setCityFilter(event.target.value)}><option value="">全部城市</option>{cities.map((city) => <option key={city}>{city}</option>)}</select></div>
       <div className="admin-activities">{shown.length ? shown.map((activity) => <article className="admin-activity" key={activity.id}>
-        {activity.posterUrl ? <img src={activity.posterUrl} alt="" loading="lazy" /> : <span className="admin-poster-placeholder">✦</span>}
+        {activity.thumbnailUrl ? <img src={activity.thumbnailUrl} alt="" loading="lazy" /> : <span className="admin-poster-placeholder">✦</span>}
         <div><strong>{activity.data.event.title}</strong><small>{displayDate(activity.data.event.date)} · {activity.city} · {activity.data.event.venue || "场地待公布"}</small><a href={`/events/${activity.id}`}>查看详情</a></div>
         <div className="admin-row-actions"><button disabled={busy} onClick={() => void beginEdit(activity)}><Pencil size={16} /> 编辑</button><button disabled={busy} onClick={() => void remove(activity)}><Trash2 size={16} /> 删除</button></div>
       </article>) : <p className="activity-empty">暂无活动</p>}</div>
