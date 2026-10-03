@@ -12,6 +12,7 @@ export function GroupBindingPicker({ groupName, value, library, disabled, onChan
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const selected = library.find((entry) => entry.id === value);
   const searchKey = groupMatchKey(query);
@@ -23,6 +24,17 @@ export function GroupBindingPicker({ groupName, value, library, disabled, onChan
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
 
   const choose = (id: string) => {
     onChange(id);
@@ -30,8 +42,8 @@ export function GroupBindingPicker({ groupName, value, library, disabled, onChan
     setQuery("");
   };
 
-  return <div className="group-binding-picker" onBlur={(event) => {
-    if (!event.currentTarget.contains(event.relatedTarget)) { setOpen(false); setQuery(""); }
+  return <div ref={pickerRef} className="group-binding-picker" onBlur={(event) => {
+    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) { setOpen(false); setQuery(""); }
   }} onKeyDown={(event) => {
     if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); setQuery(""); }
   }}>

@@ -34,3 +34,14 @@ it("searches avatar choices without losing the selected binding and allows clear
   fireEvent.click(screen.getByRole("button", { name: "未绑定 · 使用本场 crop" }));
   expect(onChange).toHaveBeenCalledWith("");
 });
+
+it("keeps the choices available when a touch blurs search before clicking an avatar", () => {
+  const onChange = vi.fn();
+  render(<GroupBindingPicker groupName="Token" value="" library={library} disabled={false} onChange={onChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "Token 的团体库绑定" }));
+  const search = screen.getByRole("searchbox", { name: "搜索Token的团体库头像" });
+  fireEvent.change(search, { target: { value: "Token" } });
+  fireEvent.blur(search, { relatedTarget: null });
+  fireEvent.click(screen.getByRole("button", { name: /Token.*有头像/ }));
+  expect(onChange).toHaveBeenCalledWith("1");
+});
