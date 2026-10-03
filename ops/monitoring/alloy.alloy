@@ -1,0 +1,43 @@
+logging {
+  level = "warn"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}
+
+loki.process "nginx_time" {
+  stage.json {
+    expressions = { time = "time" }
+  }
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.file "live_9999" {
+  targets = [
+    {
+      __path__ = "/var/log/nginx/live-idol-timetable-access.jsonl",
+      job      = "live-9999",
+      port     = "9999",
+    },
+    {
+      __path__ = "/var/lib/loki-import/live-idol-timetable-legacy.jsonl",
+      job      = "live-9999",
+      port     = "9999",
+      source   = "legacy",
+    },
+  ]
+  forward_to = [loki.process.nginx_time.receiver]
+}
+
+loki.source.journal "oshi_9000" {
+  matches    = "_SYSTEMD_UNIT=fujian-oshi9.service"
+  labels     = { job = "oshi-9000", port = "9000" }
+  forward_to = [loki.write.local.receiver]
+}

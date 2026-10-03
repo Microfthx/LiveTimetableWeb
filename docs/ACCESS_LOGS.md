@@ -14,3 +14,5 @@ live-access 9999 follow
 两项记录均使用服务器实际收到的连接 IP，不信任请求者可伪造的 `X-Forwarded-For`。只记录 URL 路径，不记录查询参数、Cookie、请求正文或管理员密钥。若将来接入可信反向代理/CDN，应重新配置真实来源 IP 的可信代理列表。公网 HTTP 请求不包含访客设备的 MAC 地址；服务器 ARP/邻居表只能看到当前链路邻居（通常是网关），不能据此识别远端访客。
 
 9000 的日志模块保存在 `deploy/access-log-9000.mjs`，部署为 `/opt/fujian-idol/access-log.mjs`，由该站点的 `oshi9-server.mjs` 在请求处理开始时调用 `attachAccessLog(req, res)`。9999 的配置保存在 `deploy/nginx-9999.conf`。轮换配置见 `deploy/logrotate-nginx-access.conf`，必须给独立的 Nginx 主进程 `/run/live-idol-timetable-nginx.pid` 发送 `USR1`，使其重新打开新日志文件。
+
+可视化监控已使用 Grafana、Loki、Alloy 部署。访问方式、仪表盘和维护说明见 [`ops/monitoring/README.md`](../ops/monitoring/README.md)。
