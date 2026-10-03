@@ -16,7 +16,7 @@ export function GroupBindingPicker({ groupName, value, library, disabled, onChan
   const searchRef = useRef<HTMLInputElement>(null);
   const selected = library.find((entry) => entry.id === value);
   const searchKey = groupMatchKey(query);
-  const matches = open ? library.filter((entry) => groupMatchKey(entry.name).includes(searchKey)) : [];
+  const matches = open ? library.filter((entry) => [entry.name, ...(entry.aliases ?? [])].some((name) => groupMatchKey(name).includes(searchKey))) : [];
 
   useEffect(() => {
     if (open) searchRef.current?.focus();

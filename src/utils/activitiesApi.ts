@@ -51,6 +51,7 @@ export const importWeiboGroupProfile = (url: string, cookie: string) =>
   request<WeiboGroupPreview>("/api/admin/groups/weibo-profile", "POST", { url, cookie });
 export interface GroupDraft {
   name: string;
+  aliases?: string[];
   weiboUid?: string;
   weiboUrl?: string;
   avatarSourceUrl?: string;

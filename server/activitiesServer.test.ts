@@ -246,6 +246,27 @@ it("matches simplified and traditional group names without changing either displ
   expect((await request(`/api/admin/groups/${libraryGroup.id}`, "DELETE")).status).toBe(200);
 });
 
+it("stores editable aliases and binds bracketed event names without changing OCR data", async () => {
+  const created = await request("/api/admin/groups", "POST", { name: "電波TOXIC", aliases: ["Toxic"] });
+  expect(created.status).toBe(201);
+  const libraryGroup = await created.json();
+  expect(libraryGroup.aliases).toEqual(["Toxic"]);
+  expect((await request("/api/admin/groups", "POST", { name: "Another", aliases: ["toxic"] })).status).toBe(409);
+  expect((await request("/api/admin/groups", "POST", { name: "Another", aliases: "toxic" })).status).toBe(400);
+  const data = { ...demoData, groups: demoData.groups.map((group, index) =>
+    index === 0 ? { ...group, name: "Toxic（武汉）" } : group) };
+  const activityResponse = await request("/api/admin/activities", "POST", { city: "武汉", data });
+  expect(activityResponse.status).toBe(201);
+  const activity = await activityResponse.json();
+  expect(activity.groupBindings[data.groups[0].id]).toBe(libraryGroup.id);
+  expect(activity.data.groups[0].name).toBe("Toxic（武汉）");
+  const updated = await request(`/api/admin/groups/${libraryGroup.id}`, "PATCH", { name: "電波TOXIC", aliases: ["Toxic", "Dianbo Toxic"] });
+  expect(updated.status).toBe(200);
+  expect((await updated.json()).aliases).toEqual(["Toxic", "Dianbo Toxic"]);
+  expect((await request(`/api/admin/activities/${activity.id}`, "DELETE")).status).toBe(200);
+  expect((await request(`/api/admin/groups/${libraryGroup.id}`, "DELETE")).status).toBe(200);
+});
+
 it("keeps the migrated event after restart and invalidates logout cookie", async () => {
   const saved = JSON.parse(await readFile(join(directory, "activities.json"), "utf8"));
   expect(saved).toHaveLength(1);

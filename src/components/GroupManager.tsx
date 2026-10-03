@@ -21,6 +21,7 @@ export function GroupManager() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<GroupLibraryRecord | null>(null);
   const [draft, setDraft] = useState<GroupDraft | null>(null);
+  const [aliasText, setAliasText] = useState("");
   const [cookie, setCookie] = useState(weiboCookie);
   const [rememberCookie, setRememberCookie] = useState(() => Boolean(weiboCookie()));
   const [busy, setBusy] = useState(false);
@@ -39,6 +40,7 @@ export function GroupManager() {
   const open = (group?: GroupLibraryRecord) => {
     setEditing(group ?? null);
     setDraft(group ? { name: group.name, weiboUid: group.weiboUid ?? "", weiboUrl: group.weiboUrl ?? "", avatarSourceUrl: group.avatarSourceUrl ?? "" } : emptyDraft());
+    setAliasText(group?.aliases?.join("\n") ?? "");
     setImagePreview(group?.avatarUrl ?? "");
     setError("");
   };
@@ -46,8 +48,9 @@ export function GroupManager() {
     if (!draft || busy) return;
     setBusy(true); setError("");
     try {
-      if (editing) await updateGroup(editing.id, draft);
-      else await createGroup(draft);
+      const savedDraft = { ...draft, aliases: aliasText.split(/\r?\n/).map((alias) => alias.trim()).filter(Boolean) };
+      if (editing) await updateGroup(editing.id, savedDraft);
+      else await createGroup(savedDraft);
       await refresh();
       setDraft(null); setEditing(null); setImagePreview("");
       setNotice(editing ? "团体资料已更新。" : "团体已加入团体库。");
@@ -76,21 +79,23 @@ export function GroupManager() {
     finally { setBusy(false); }
   };
   const searchKey = groupMatchKey(search);
-  const visible = groups.filter((group) => groupMatchKey(group.name).includes(searchKey)
+  const visible = groups.filter((group) => [group.name, ...(group.aliases ?? [])].some((name) => groupMatchKey(name).includes(searchKey))
     || !!group.weiboUid?.includes(search.trim()));
   return <section className="group-manager">
     <div className="group-manager-toolbar"><h2>团体管理 <small>{groups.length}</small></h2><button className="primary-button" onClick={() => open()} disabled={busy}><Plus size={18} /> 新增团体</button></div>
-    <input aria-label="搜索团体" placeholder="搜索团体名称或微博 UID" value={search} onChange={(event) => setSearch(event.target.value)} />
+    <input aria-label="搜索团体" placeholder="搜索团体名称、别名或微博 UID" value={search} onChange={(event) => setSearch(event.target.value)} />
     {notice && <p className="form-success" role="status">{notice}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="group-manager-list">{visible.map((group) => <article key={group.id} className="group-manager-row">
       {group.avatarUrl ? <img src={group.avatarUrl} alt="" loading="lazy" /> : <span className="group-manager-placeholder">✦</span>}
-      <div><strong>{group.name}</strong><small>{group.weiboUid ? `微博 UID ${group.weiboUid}` : "未关联微博"} · {group.boundActivityCount ?? 0} 场活动</small></div>
+      <div><strong>{group.name}</strong>{!!group.aliases?.length && <small>别名：{group.aliases.join("、")}</small>}<small>{group.weiboUid ? `微博 UID ${group.weiboUid}` : "未关联微博"} · {group.boundActivityCount ?? 0} 场活动</small></div>
       <div className="admin-row-actions"><button onClick={() => open(group)} disabled={busy}>编辑</button><button onClick={() => void remove(group)} disabled={busy}><Trash2 size={15} /> 删除</button></div>
     </article>)}{!visible.length && <p className="activity-empty">暂无匹配团体</p>}</div>
     {draft && <div className="group-manager-editor" role="dialog" aria-modal="true" aria-label={editing ? "编辑团体" : "新增团体"}>
       <div className="group-manager-editor-card"><h3>{editing ? "编辑团体" : "新增团体"}</h3>
         <label>标准团体名 *<input value={draft.name} maxLength={120} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+        <label>匹配别名（每行一个）<textarea value={aliasText} rows={3} onChange={(event) => setAliasText(event.target.value)} placeholder="例如：Toxic" /></label>
+        <p className="sheet-description">活动团名与标准名或任一别名一致时自动匹配；括号内的地区标注会忽略。</p>
         <label>微博主页链接<input type="url" value={draft.weiboUrl ?? ""} placeholder="https://weibo.com/u/123456789" onChange={(event) => setDraft({ ...draft, weiboUrl: event.target.value })} /></label>
         <label>微博 Cookie（用于读取资料）<input type="password" value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder="可使用当前浏览器已保存的 Cookie" /></label>
         <label className="group-manager-remember"><input type="checkbox" checked={rememberCookie} onChange={(event) => setRememberCookie(event.target.checked)} /> 在此浏览器记住微博 Cookie</label>

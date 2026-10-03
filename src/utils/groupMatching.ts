@@ -11,7 +11,8 @@ export function canonicalGroupName(name: string): string {
 
 /** Match the same written name across Chinese scripts and ASCII letter case. */
 export function groupMatchKey(name: string): string {
-  return toSimplified(canonicalGroupName(name)).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  const withoutNotes = name.replace(/\([^()]*\)|（[^（）]*）|\[[^\[\]]*\]|【[^【】]*】/g, "");
+  return toSimplified(canonicalGroupName(withoutNotes)).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /** Suggest a library name from a Weibo handle without changing event names. */
@@ -22,18 +23,22 @@ export function groupNameFromWeiboHandle(handle: string): string {
   return canonicalGroupName(normalized.slice(0, suffix.index).replace(/[_-]+$/, "")) || normalized;
 }
 
-export function exactGroupBindings(groups: IdolGroup[], library: GroupLibraryRecord[]): GroupBindings {
-  const byName = new Map<string, string | null>();
-  for (const group of library) {
-    const key = groupMatchKey(group.name);
-    if (!key) continue;
-    if (byName.has(key)) byName.set(key, null); // Never choose between ambiguous library records.
-    else byName.set(key, group.id);
-  }
+export function matchGroupBindings(groups: IdolGroup[], library: GroupLibraryRecord[]): GroupBindings {
+  const candidates = library.map((group) => ({
+    id: group.id,
+    keys: new Set([group.name, ...(group.aliases ?? [])].map(groupMatchKey).filter(Boolean)),
+  }));
   const bindings: GroupBindings = {};
   for (const group of groups) {
-    const match = byName.get(groupMatchKey(group.name));
-    if (match) bindings[group.id] = match;
+    const key = groupMatchKey(group.name);
+    if (!key) continue;
+    const exact = candidates.filter((candidate) => candidate.keys.has(key));
+    if (exact.length === 1) { bindings[group.id] = exact[0].id; continue; }
+    if (exact.length > 1) continue;
+    // A short fragment can coincidentally occur in an unrelated name.
+    if ([...key].length < 2 || (/^[a-z0-9]+$/.test(key) && key.length < 3)) continue;
+    const partial = candidates.filter((candidate) => [...candidate.keys].some((name) => name.includes(key)));
+    if (partial.length === 1) bindings[group.id] = partial[0].id;
   }
   return bindings;
 }

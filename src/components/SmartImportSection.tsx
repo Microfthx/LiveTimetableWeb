@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, ImageUp, Sparkles } from "lucide-react";
 import type { EventData, PosterSource } from "../types/timetable";
 import type { GroupLibraryRecord } from "../types/groupLibrary";
-import { exactGroupBindings } from "../utils/groupMatching";
+import { matchGroupBindings } from "../utils/groupMatching";
 import type { AiCropDebugData } from "../types/aiCropDebug";
 import {
   aiStatus,
@@ -518,7 +518,7 @@ export function SmartImportSection({
     if (manualRequest > 0) void switchToManual();
   }, [manualRequest]);
 
-  const matchedBindings = pending ? exactGroupBindings(pending.groups, libraryGroups) : {};
+  const matchedBindings = pending ? matchGroupBindings(pending.groups, libraryGroups) : {};
 
   return (
     <section className="smart-import" aria-label="智能导入">

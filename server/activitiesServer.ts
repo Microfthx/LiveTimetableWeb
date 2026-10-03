@@ -7,7 +7,7 @@ import { imageSize } from "image-size";
 import sharp from "sharp";
 import type { ActivityRecord } from "../src/types/activity.js";
 import type { GroupBindings, GroupLibraryRecord } from "../src/types/groupLibrary.js";
-import { canonicalGroupName, exactGroupBindings, groupMatchKey } from "../src/utils/groupMatching.js";
+import { canonicalGroupName, groupMatchKey, matchGroupBindings } from "../src/utils/groupMatching.js";
 import { validateEventData } from "../src/utils/validation.js";
 import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
 import { createAiJobQueue, type AiJobInput, type AiJobRunner } from "./aiJobs.js";
@@ -211,10 +211,12 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
       const raw = object(item);
       if (typeof raw.id !== "string" || !new RegExp(`^${ID_PATTERN}$`).test(raw.id)
         || typeof raw.name !== "string" || !canonicalGroupName(raw.name)
+        || (raw.aliases !== undefined && (!Array.isArray(raw.aliases) || raw.aliases.length > 20
+          || raw.aliases.some((alias) => typeof alias !== "string" || !canonicalGroupName(alias) || alias.length > 120)))
         || typeof raw.createdAt !== "string" || typeof raw.updatedAt !== "string"
         || (raw.avatarFilename !== undefined && (typeof raw.avatarFilename !== "string" || !/^[a-f0-9-]{36}\.webp$/.test(raw.avatarFilename))))
         throw new Error("Invalid stored group");
-      return raw as unknown as StoredGroup;
+      return { ...raw, aliases: raw.aliases ?? [] } as unknown as StoredGroup;
     });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -250,8 +252,18 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
   function groupFields(input: Record<string, unknown>, currentId?: string) {
     const name = typeof input.name === "string" ? canonicalGroupName(input.name) : "";
     if (!name || name.length > 120) throw new HttpError(400, "团体名称不能为空，且不能超过 120 个字符。");
-    if (library.some((group) => group.id !== currentId && groupMatchKey(group.name) === groupMatchKey(name)))
-      throw new HttpError(409, "团体库中已存在同名团体。");
+    const current = library.find((group) => group.id === currentId);
+    const rawAliases = input.aliases === undefined ? current?.aliases ?? [] : input.aliases;
+    if (!Array.isArray(rawAliases) || rawAliases.length > 20
+      || rawAliases.some((alias) => typeof alias !== "string" || !canonicalGroupName(alias) || alias.length > 120))
+      throw new HttpError(400, "别名最多 20 个，每个必须为不超过 120 字的非空名称。");
+    const aliases = rawAliases.map((alias) => canonicalGroupName(alias as string));
+    const ownKeys = [name, ...aliases].map(groupMatchKey);
+    if (ownKeys.some((key) => !key) || new Set(ownKeys).size !== ownKeys.length)
+      throw new HttpError(400, "别名不能与标准名或其他别名重复。");
+    if (library.some((group) => group.id !== currentId
+      && [group.name, ...(group.aliases ?? [])].some((other) => ownKeys.includes(groupMatchKey(other)))))
+      throw new HttpError(409, "团体名称或别名已被其他团体使用。");
     let weiboUid = typeof input.weiboUid === "string" ? input.weiboUid.trim() : "";
     const weiboUrl = typeof input.weiboUrl === "string" ? input.weiboUrl.trim() : "";
     if (weiboUrl && !weiboUid) weiboUid = profileUidFromUrl(weiboUrl);
@@ -261,7 +273,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     if (library.some((group) => group.id !== currentId && weiboUid && group.weiboUid === weiboUid))
       throw new HttpError(409, "该微博 UID 已绑定其他团体。");
     const avatarSourceUrl = typeof input.avatarSourceUrl === "string" ? input.avatarSourceUrl.trim().slice(0, 2048) : "";
-    return { name, ...(weiboUid ? { weiboUid } : {}), ...(weiboUrl ? { weiboUrl } : {}),
+    return { name, aliases, ...(weiboUid ? { weiboUid } : {}), ...(weiboUrl ? { weiboUrl } : {}),
       ...(avatarSourceUrl ? { avatarSourceUrl } : {}) };
   }
   async function avatarBytes(value: unknown): Promise<Buffer | null> {
@@ -609,7 +621,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         const data = checkedEvent(input.data);
         const result = await exclusive(async () => {
           const groupBindings = input.groupBindings === undefined
-            ? exactGroupBindings(data.groups, library.map(publicGroup))
+            ? matchGroupBindings(data.groups, library.map(publicGroup))
             : checkedBindings(input.groupBindings, data);
           const id = randomUUID();
           const now = new Date().toISOString();

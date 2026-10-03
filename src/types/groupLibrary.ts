@@ -2,6 +2,7 @@
 export interface GroupLibraryRecord {
   id: string;
   name: string;
+  aliases?: string[];
   weiboUid?: string;
   weiboUrl?: string;
   avatarUrl?: string;

@@ -23,7 +23,7 @@ import {
 } from "../utils/poster";
 import { GroupImage, LibraryImageContext, RuntimeImageContext } from "./GroupImage";
 import { createGroup, listGroups } from "../utils/activitiesApi";
-import { exactGroupBindings } from "../utils/groupMatching";
+import { matchGroupBindings } from "../utils/groupMatching";
 import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSection";
 import { AiCropDebugPanel } from "./AiCropDebugPanel";
 import type { AiCropDebugData } from "../types/aiCropDebug";
@@ -254,7 +254,7 @@ export function ImportBottomSheet({
 
   useEffect(() => { void listGroups().then(setLibrary).catch(() => setError("团体库暂时无法读取，未匹配团体仍可使用本场裁剪。"))
     .finally(() => setLibraryReady(true)); }, []);
-  const automaticBindings = candidate ? exactGroupBindings(candidate.data.groups, library) : {};
+  const automaticBindings = candidate ? matchGroupBindings(candidate.data.groups, library) : {};
   const bindings: GroupBindings = Object.fromEntries(Object.entries({ ...automaticBindings, ...initialBindings, ...bindingOverrides })
     .filter((entry): entry is [string, string] => !!entry[1] && !!candidate?.data.groups.some((group) => group.id === entry[0]) && !!library.find((group) => group.id === entry[1])));
   const libraryImages: RuntimeGroupImages = Object.fromEntries(Object.entries(bindings).flatMap(([eventId, libraryId]) => {
