@@ -227,6 +227,7 @@ it("uses text alone, a shared image once, or two explicitly labeled images", asy
 it("recognizes city beside EventData in one strict OpenRouter request", async () => {
   const picture = { bytes: tinyPng, mime: "image/png", width: 1, height: 1 };
   const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
+  const upstream: Array<{ status: number; body: string }> = [];
   const fakeFetch = (async (url: URL | RequestInfo, init?: RequestInit) => {
     requests.push({
       url: String(url),
@@ -249,8 +250,12 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
     timetable: picture, crop: picture, cover: { ...picture }, postText: "14:00 Gara", mode: "normal",
     debug: true,
     apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
+    onResponse: async (response) => { upstream.push({ status: response.status, body: response.body }); },
   });
   expect(requests).toHaveLength(1);
+  expect(upstream).toHaveLength(1);
+  expect(upstream[0].status).toBe(200);
+  expect(JSON.parse(upstream[0].body).choices[0].finish_reason).toBe("stop");
   expect(requests[0].url).toBe("https://openrouter.ai/api/v1/chat/completions");
   expect(requests[0].headers.get("Authorization")).toBe("Bearer test-secret");
   expect(requests[0].body.model).toBe("z-ai/glm-5.3-flash");
@@ -284,13 +289,21 @@ it("reports OpenRouter credit errors without changing import data", async () => 
 });
 
 it("reports a timed-out successful response body as an AI timeout", async () => {
-  const response = new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
-  response.json = async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); };
+  let delivered = false;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!delivered) { delivered = true; controller.enqueue(new TextEncoder().encode("partial")); }
+      else controller.error(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    },
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
   const fakeFetch = (async () => response) as typeof fetch;
+  const saved: Array<{ body: string; complete: boolean }> = [];
   await expect(recognizeEvent({
     timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
     apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
+    onResponse: async (upstream) => { saved.push({ body: upstream.body, complete: upstream.complete }); },
   })).rejects.toMatchObject({ code: "AI_TIMEOUT", message: "AI 识别超时，请重试或使用手动 JSON。" });
+  expect(saved).toEqual([{ body: "partial", complete: false }]);
 });
 
 it("keeps malformed successful API responses distinct from timeouts", async () => {

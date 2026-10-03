@@ -1721,3 +1721,16 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .smart-match-row strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .smart-match-row small { color: #678899; text-align: right; }
 @media (max-width: 520px) { .group-manager-row { flex-wrap: wrap; } .group-manager-row .admin-row-actions { width: 100%; justify-content: flex-end; } }
+.ai-job-card, .ai-job-history { margin: 12px 0; padding: 12px; border: 1px solid #cfe9ed; border-radius: 14px; background: #f4fbfc; color: #24415c; min-width: 0; }
+.ai-job-card strong { display: block; font-size: 15px; }
+.ai-job-card p { margin: 6px 0; }
+.ai-job-card small { display: block; color: #607b8d; line-height: 1.45; overflow-wrap: anywhere; }
+.ai-job-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
+.ai-job-actions .text-button { width: auto; min-height: 44px; }
+.ai-job-actions a { color: #157f9a; font-size: 13px; font-weight: 700; }
+.ai-raw-response { max-height: 260px; max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; border-radius: 9px; background: #fff; font-size: 11px; line-height: 1.4; }
+.ai-job-history summary { cursor: pointer; font-weight: 700; }
+.ai-job-history-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #e0eef0; padding: 8px 0; font-size: 12px; }
+.ai-job-history-row:first-of-type { margin-top: 8px; }
+.ai-job-history-row span { min-width: 0; overflow-wrap: anywhere; }
+.ai-job-history-row .text-button { width: auto; min-height: 44px; flex: none; }

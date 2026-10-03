@@ -84,6 +84,8 @@
 
 智能导入可以使用管理员指定的时间表图片、微博正文，或两者交叉核对。`timetableSource`、`cropSource`、`displayPoster` 都是导入草稿的素材角色，**不加入 EventData v1.0**。若只提供微博正文，`poster` 宽高为 0，所有 `crop` 为全 0。若提供裁剪源，`poster.width/height` 由程序读取该图片实际像素尺寸并覆盖 AI 输出；所有团体的 crop 坐标只相对于这张图片。活动列表封面属于 `ActivityRecord.posterUrl`，可以和 `cropSourceUrl` 不同；旧活动只保存一张海报时，裁剪源回退到 `posterUrl`。
 
+服务器保存的 AI 队列任务、输入图片和 OpenRouter 原始响应是导入诊断记录，独立于此 OCR JSON 协议和活动 `EventData`。只有通过人工核对、确认导入的结果才成为活动数据。
+
 网页解析时校验字段、时间、重复 ID、海报尺寸、图片类型和裁剪范围；严重 JSON/关键字段错误不会覆盖现有活动，单个 crop 无效会提示并降级为全 0。无海报仍可导入，图片回退至已有 `image_base64` 或占位图。服务器保存活动 `EventData`、城市、海报和裁剪原图。浏览器在活动详情中按需从裁剪原图生成团体图片；首页不裁剪团体图片。访客调整的演出延迟按活动 ID 保存在该浏览器的 localStorage，不修改服务器原始数据。
 
 ## 网站层活动与团体库

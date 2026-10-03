@@ -95,6 +95,32 @@ export type AiSource =
   | { kind: "weibo"; importId: string; imageId: string }
   | { kind: "upload"; poster: PosterSource };
 
+export interface AiJobSummary {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  mode: "normal" | "high";
+  sourceUrl?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  queuePosition: number;
+  hasRawResponse: boolean;
+  rawComplete?: boolean;
+  upstreamStatus?: number;
+  requestId?: string | null;
+  model?: string;
+  provider?: string;
+  finishReason?: string;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  error?: { code: string; message: string };
+}
+export interface AiJobDetail extends AiJobSummary {
+  postText: string;
+  sources: Record<"timetable" | "crop" | "cover", { url: string; width: number; height: number; mime: string } | null>;
+  result?: { data: EventData; city: string; warnings: string[]; model: string; mode: "normal" | "high"; debug?: import("../types/aiCropDebug").AiCropDebugData };
+}
+
 async function sourcePayload(source: AiSource | null) {
   if (!source) return undefined;
   return source.kind === "weibo"
@@ -104,23 +130,42 @@ async function sourcePayload(source: AiSource | null) {
 
 export const aiStatus = () => request<{ configured: boolean }>("/api/admin/ai/status");
 export const parseWeibo = (url: string, cookie: string) => request<WeiboImportPost>("/api/admin/weibo/parse", "POST", { url, cookie });
-export async function recognizeTimetable(input: {
+export const listAiJobs = () => request<AiJobSummary[]>("/api/admin/ai/jobs");
+export const getAiJob = (id: string) => request<AiJobDetail>(`/api/admin/ai/jobs/${encodeURIComponent(id)}`);
+export const getAiJobRaw = async (id: string) => {
+  const response = await fetch(`/api/admin/ai/jobs/${encodeURIComponent(id)}/raw`, { credentials: "same-origin", cache: "no-store" });
+  if (!response.ok) throw new ApiError(response.status, "AI 原始响应暂不可读取。");
+  return response.text();
+};
+export interface AiRecognitionRequest {
   timetableSource: AiSource | null;
   cropSource: AiSource | null;
   coverSource?: AiSource | null;
   weiboText: string;
+  weiboUrl?: string;
   mode: "normal" | "high";
   debug?: boolean;
-}) {
+}
+
+async function recognitionPayload(input: AiRecognitionRequest) {
+  return {
+    timetableSource: await sourcePayload(input.timetableSource),
+    cropSource: input.cropSource === input.timetableSource ? undefined : await sourcePayload(input.cropSource),
+    coverSource: input.coverSource && input.coverSource !== input.timetableSource && input.coverSource !== input.cropSource
+      ? await sourcePayload(input.coverSource) : undefined,
+    weiboText: input.weiboText,
+    weiboUrl: input.weiboUrl,
+    mode: input.mode,
+    debug: input.debug === true,
+  };
+}
+
+export async function recognizeTimetable(input: AiRecognitionRequest) {
   return request<{ data: EventData; city: string; warnings: string[]; model: string; mode: "normal" | "high"; debug?: import("../types/aiCropDebug").AiCropDebugData }>(
-    "/api/admin/ai/parse-poster", "POST", {
-      timetableSource: await sourcePayload(input.timetableSource),
-      cropSource: input.cropSource === input.timetableSource ? undefined : await sourcePayload(input.cropSource),
-      coverSource: input.coverSource && input.coverSource !== input.timetableSource && input.coverSource !== input.cropSource
-        ? await sourcePayload(input.coverSource) : undefined,
-      weiboText: input.weiboText,
-      mode: input.mode,
-      debug: input.debug === true,
-    },
+    "/api/admin/ai/parse-poster", "POST", await recognitionPayload(input),
   );
+}
+
+export async function submitAiJob(input: AiRecognitionRequest) {
+  return request<AiJobSummary>("/api/admin/ai/jobs", "POST", await recognitionPayload(input));
 }

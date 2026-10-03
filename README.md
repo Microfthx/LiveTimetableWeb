@@ -19,7 +19,7 @@ npm run dev:server
 
 OCR 协议仍为 [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) 的 `schema_version: "1.0"`。网站层 `ActivityRecord` 将 `id`、`city`、`posterUrl`、`thumbnailUrl`、`cropSourceUrl`、时间戳与原有 `EventData` 包装在一起；城市和图片角色不写入正式 `EventData`。服务器使用现有 Node 服务和原子写入的 `DATA_DIR/activities.json` 持久化活动，正式图片单独保存在 `DATA_DIR/posters/`，不放入 JSON。活动封面上传时会生成最长边不超过 480 像素的 WebP 缩略图并保存在同一目录；旧封面在服务启动后自动补生成，缺失时访问缩略图接口也会补生成。主页和管理列表只读取缩略图，主页点击封面会弹出小窗并在小窗中加载原图。首次启动会从旧 `state.json` 迁入原共享活动，并保留该文件及旧团体缩略图。智能导入流程见 [docs/SMART_IMPORT.md](docs/SMART_IMPORT.md)。
 
-普通用户可读取 `GET /api/activities`、`GET /api/activities/:id`、`GET /api/activities/:id/thumbnail`、`GET /api/activities/:id/poster` 和 `GET /api/activities/:id/crop-source`。管理操作使用原有活动 CRUD，新增 `POST /api/admin/weibo/parse`、`GET /api/admin/weibo/import-assets/:importId/:imageId`、`GET /api/admin/ai/status` 和 `POST /api/admin/ai/parse-poster`。所有管理写请求均由服务器验证 HttpOnly 签名会话；密钥不写入前端或 localStorage。浏览器对每场活动使用独立的 `live-idol-delay:<id>`，不会改动服务器活动 JSON。
+普通用户可读取 `GET /api/activities`、`GET /api/activities/:id`、`GET /api/activities/:id/thumbnail`、`GET /api/activities/:id/poster` 和 `GET /api/activities/:id/crop-source`。管理操作使用原有活动 CRUD；智能导入通过 `POST /api/admin/ai/jobs` 提交队列任务，再通过 `GET /api/admin/ai/jobs/:id` 查询结果。最近任务、原始响应和任务图片均只允许管理员读取，记录保存在 `DATA_DIR/ai-jobs/`。旧 `POST /api/admin/ai/parse-poster` 保留作兼容。所有管理写请求均由服务器验证 HttpOnly 签名会话；密钥不写入前端或 localStorage。浏览器对每场活动使用独立的 `live-idol-delay:<id>`，不会改动服务器活动 JSON。
 
 ## 阿里云部署
 

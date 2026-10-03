@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -56,12 +56,63 @@ it("migrates the old shared event and blocks unauthenticated writes", async () =
   expect((await request("/api/admin/activities", "POST", { city: "上海", data: demoData }, false)).status).toBe(401);
   expect((await request("/api/admin/weibo/parse", "POST", { url: "https://m.weibo.cn/detail/1234567890123", cookie: "SUB=test" }, false)).status).toBe(401);
   expect((await request("/api/admin/ai/parse-poster", "POST", { mode: "normal", weiboText: "14:00 Gara" }, false)).status).toBe(401);
+  expect((await request("/api/admin/ai/jobs", "POST", { mode: "normal", weiboText: "14:00 Gara" }, false)).status).toBe(401);
+  expect((await request("/api/admin/ai/jobs", "GET", undefined, false)).status).toBe(401);
+  expect((await request("/api/admin/ai/jobs/11111111-1111-4111-8111-111111111111/raw", "GET", undefined, false)).status).toBe(401);
   expect((await request("/api/admin/login", "POST", { key: "wrong" })).status).toBe(401);
   const login = await request("/api/admin/login", "POST", { key });
   expect(login.status).toBe(200);
   cookie = login.headers.get("set-cookie")!.split(";")[0];
   expect(cookie).toContain("admin_session=");
   expect((await (await request("/api/admin/session")).json()).authenticated).toBe(true);
+  expect((await request("/api/admin/ai/jobs")).status).toBe(200);
+  expect((await request("/api/admin/ai/jobs", "POST", { mode: "invalid", weiboText: "14:00 Gara" })).status).toBe(400);
+});
+
+it("returns a job ID immediately and protects saved AI output behind admin auth", async () => {
+  const jobDir = await mkdtemp(join(tmpdir(), "live-idol-ai-queue-test-"));
+  const rawBody = '{"choices":[{"message":{"content":"saved"}}]}';
+  const jobServer = await createActivitiesServer({
+    dataDir: jobDir, adminAccessKey: key, adminSessionSecret: secret,
+    aiJobRunner: async (_input, onResponse) => {
+      await onResponse({ status: 200, contentType: "application/json", requestId: "test-request", body: rawBody, complete: true });
+      return { data: demoData, city: "厦门", warnings: [], model: "test-model", mode: "normal" };
+    },
+  });
+  try {
+    await new Promise<void>((done) => jobServer.listen(0, "127.0.0.1", done));
+    const address = jobServer.address();
+    if (!address || typeof address === "string") throw new Error("No test port");
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    const headers = { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" };
+    const login = await fetch(`${endpoint}/api/admin/login`, { method: "POST", headers, body: JSON.stringify({ key }) });
+    const adminCookie = login.headers.get("set-cookie")!.split(";")[0];
+    const created = await fetch(`${endpoint}/api/admin/ai/jobs`, {
+      method: "POST", headers: { ...headers, Cookie: adminCookie },
+      body: JSON.stringify({ mode: "normal", weiboText: "14:00 Gara", weiboUrl: "https://weibo.com/123/456" }),
+    });
+    expect(created.status).toBe(202);
+    const { id } = await created.json();
+    expect(id).toMatch(/^[a-f0-9-]{36}$/);
+    const rawUrl = `${endpoint}/api/admin/ai/jobs/${id}/raw`;
+    expect((await fetch(rawUrl)).status).toBe(401);
+    await vi.waitFor(async () => {
+      const response = await fetch(`${endpoint}/api/admin/ai/jobs/${id}`, { headers: { Cookie: adminCookie } });
+      expect(response.status).toBe(200);
+      const job = await response.json();
+      expect(job.status).toBe("completed");
+      expect(job.result.data.event.title).toBe(demoData.event.title);
+      expect(job.hasRawResponse).toBe(true);
+      expect(job.sourceUrl).toBe("https://weibo.com/123/456");
+    });
+    const saved = await fetch(rawUrl, { headers: { Cookie: adminCookie } });
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).toBe(rawBody);
+  } finally {
+    await new Promise<void>((done) => jobServer.close(() => done()));
+    if (!resolve(jobDir).startsWith(resolve(tmpdir(), "live-idol-ai-queue-test-"))) throw new Error("Unsafe test cleanup path");
+    await rm(jobDir, { recursive: true, force: true });
+  }
 });
 
 it("persists separate display and crop assets while keeping old poster fallback", async () => {

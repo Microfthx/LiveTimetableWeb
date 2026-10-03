@@ -6,8 +6,14 @@ import { exactGroupBindings } from "../utils/groupMatching";
 import type { AiCropDebugData } from "../types/aiCropDebug";
 import {
   aiStatus,
+  ApiError,
+  getAiJob,
+  getAiJobRaw,
+  listAiJobs,
   parseWeibo,
-  recognizeTimetable,
+  submitAiJob,
+  type AiJobDetail,
+  type AiJobSummary,
   type AiSource,
   type WeiboImportPost,
 } from "../utils/activitiesApi";
@@ -18,6 +24,7 @@ import { OCR_PROMPT } from "../constants/ocrPrompt";
 import { EventDataVisualEditor } from "./EventDataVisualEditor";
 
 const WEIBO_COOKIE_KEY = "live-idol-weibo-cookie";
+const AI_JOB_KEY = "live-idol-ai-job-id";
 
 function savedWeiboCookie(): string {
   try {
@@ -97,6 +104,15 @@ export function SmartImportSection({
   const [jsonDraft, setJsonDraft] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
+  const [activeJobId, setActiveJobId] = useState(() => {
+    try { return window.localStorage.getItem(AI_JOB_KEY) ?? ""; }
+    catch { return ""; }
+  });
+  const [job, setJob] = useState<AiJobSummary | AiJobDetail | null>(null);
+  const [recentJobs, setRecentJobs] = useState<AiJobSummary[]>([]);
+  const [rawResponse, setRawResponse] = useState("");
+  const [rawLoading, setRawLoading] = useState(false);
+  const appliedJob = useRef("");
   const localUrls = useRef(new Set<string>());
   const inFlight = useRef(false);
 
@@ -104,10 +120,80 @@ export function SmartImportSection({
     aiStatus()
       .then((value) => setConfigured(value.configured))
       .catch(() => setConfigured(false));
+    void listAiJobs().then(setRecentJobs).catch(() => undefined);
     return () => {
       for (const blobUrl of localUrls.current) URL.revokeObjectURL(blobUrl);
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getAiJob(activeJobId);
+        if (stopped) return;
+        setJob(next);
+        if (next.status === "completed" && next.result && appliedJob.current !== next.id) {
+          appliedJob.current = next.id;
+          if (!images.length) {
+            const recovered: ImportImage[] = [];
+            const restoredRoles = { timetable: "", crop: "", cover: "" };
+            for (const role of ["timetable", "crop", "cover"] as const) {
+              const source = next.sources[role];
+              if (!source) continue;
+              try {
+                const response = await fetch(source.url, { credentials: "same-origin", cache: "no-store" });
+                if (!response.ok) throw new Error("图片不可用");
+                const blob = await response.blob();
+                const poster = await readPoster(new File([blob], `${role}.${source.mime.split("/")[1] ?? "jpg"}`, { type: source.mime }));
+                if (stopped) { URL.revokeObjectURL(poster.url); return; }
+                localUrls.current.add(poster.url);
+                const id = `recovered_${role}`;
+                recovered.push({ id, url: poster.url, width: poster.width, height: poster.height, source: { kind: "upload", poster }, poster });
+                restoredRoles[role] = id;
+              } catch { setError("AI 结果已恢复，但任务图片读取失败；可重新选择图片后生成裁剪预览。"); }
+            }
+            if (stopped) return;
+            setImages(recovered);
+            setRoles(restoredRoles);
+            setPostText(next.postText);
+            if (next.sourceUrl) { setUrl(next.sourceUrl); setSourceMode("weibo"); }
+          }
+          const result = next.result;
+          onDebug?.(result.debug ?? null, next.sources.crop ? { width: next.sources.crop.width, height: next.sources.crop.height } : null);
+          setPending(result.data);
+          setRecognizedCity(result.city ?? "");
+          onCityRecognized(result.city ?? "");
+          setOriginalAi(structuredClone(result.data));
+          setJsonDraft(JSON.stringify(result.data, null, 2));
+          setWarnings(result.warnings);
+          setMode(result.mode);
+          setDraftDirty(false);
+          setEditorTab("json");
+          setShowSources(false);
+          setNotice(result.city ? `AI 识别完成，城市：${result.city}。请人工核对。` : "AI 识别完成；城市未能确认，请手动填写。请人工核对。");
+        }
+        if (next.status === "failed") setError(next.error?.message ?? "AI 任务失败，请重试。");
+        if (next.status === "queued" || next.status === "running") timer = setTimeout(() => void poll(), 2500);
+        else void listAiJobs().then(setRecentJobs).catch(() => undefined);
+      } catch (cause) {
+        if (stopped) return;
+        if (cause instanceof ApiError && cause.status === 404) {
+          try { window.localStorage.removeItem(AI_JOB_KEY); } catch { /* Storage may be unavailable. */ }
+          setActiveJobId("");
+          setJob(null);
+          setError("AI 任务记录已过期，请重新识别。");
+          return;
+        }
+        setError(cause instanceof Error ? `查询 AI 任务失败：${cause.message}` : "查询 AI 任务失败，请稍后重试。");
+        timer = setTimeout(() => void poll(), 5000);
+      }
+    };
+    void poll();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [activeJobId]);
 
   useEffect(() => {
     try {
@@ -120,6 +206,7 @@ export function SmartImportSection({
   }, [cookie, rememberCookie]);
 
   const byId = (id: string) => images.find((item) => item.id === id) ?? null;
+  const jobActive = job?.status === "queued" || job?.status === "running";
   const timetable = byId(roles.timetable);
   const crop = byId(roles.crop) ?? timetable;
   const selectedCover = byId(roles.cover);
@@ -131,7 +218,7 @@ export function SmartImportSection({
     cover: cover?.url ?? "无图片",
     mode,
     origin:
-      post ||
+      post || job?.sourceUrl ||
       [timetable, crop, cover].some((item) => item?.source.kind === "weibo")
         ? "微博"
         : "本地上传",
@@ -233,7 +320,7 @@ export function SmartImportSection({
   };
 
   const recognize = async (requestedMode: "normal" | "high") => {
-    if (inFlight.current || (!timetable && !postText.trim())) return;
+    if (inFlight.current || job?.status === "queued" || job?.status === "running" || (!timetable && !postText.trim())) return;
     if (
       draftDirty &&
       pending &&
@@ -244,30 +331,25 @@ export function SmartImportSection({
     setBusy("ai");
     setError("");
     setNotice("");
+    setRawResponse("");
     onDebug?.(null, null);
     try {
-      const result = await recognizeTimetable({
+      const submitted = await submitAiJob({
         timetableSource: timetable?.source ?? null,
         cropSource: crop?.source ?? null,
         coverSource: cityContext?.source ?? null,
         weiboText: postText,
+        weiboUrl: post?.url,
         mode: requestedMode,
         debug: debugMode,
       });
-      onDebug?.(result.debug ?? null, crop ? { width: crop.width, height: crop.height } : null);
-      setPending(result.data);
-      setRecognizedCity(result.city ?? "");
-      onCityRecognized(result.city ?? "");
-      setOriginalAi(structuredClone(result.data));
-      setJsonDraft(JSON.stringify(result.data, null, 2));
-      setWarnings(result.warnings);
+      appliedJob.current = "";
+      setJob(submitted);
+      setActiveJobId(submitted.id);
+      try { window.localStorage.setItem(AI_JOB_KEY, submitted.id); } catch { /* The current page can still poll. */ }
       setMode(requestedMode);
-      setDraftDirty(false);
-      setEditorTab("json");
-      setShowSources(false);
-      setNotice(result.city
-        ? `AI 识别完成，城市：${result.city}。请人工核对，再生成导入预览。`
-        : "AI 识别完成；城市未能确认，请手动填写。请人工核对，再生成导入预览。");
+      setNotice("AI 任务已提交到服务器。可以离开此页面，返回后继续查看结果。");
+      void listAiJobs().then(setRecentJobs).catch(() => undefined);
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -278,6 +360,35 @@ export function SmartImportSection({
       setBusy(null);
       inFlight.current = false;
     }
+  };
+
+  const showRawResponse = async () => {
+    if (!job?.hasRawResponse || rawLoading) return;
+    setRawLoading(true);
+    try { setRawResponse(await getAiJobRaw(job.id)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "AI 原始响应读取失败。"); }
+    finally { setRawLoading(false); }
+  };
+
+  const resumeJob = (id: string) => {
+    if (draftDirty && pending && !window.confirm("当前人工修改尚未保存。确定切换 AI 任务吗？")) return;
+    if (id === activeJobId) return;
+    for (const blobUrl of localUrls.current) URL.revokeObjectURL(blobUrl);
+    localUrls.current.clear();
+    appliedJob.current = "";
+    setJob(null);
+    setPending(null);
+    setOriginalAi(null);
+    setJsonDraft("");
+    setWarnings([]);
+    setPost(null);
+    setPostText("");
+    setImages([]);
+    setRoles({ timetable: "", crop: "", cover: "" });
+    setRawResponse("");
+    setError("");
+    setActiveJobId(id);
+    try { window.localStorage.setItem(AI_JOB_KEY, id); } catch { /* The current page can still poll. */ }
   };
 
   const resolvePoster = async (
@@ -300,7 +411,7 @@ export function SmartImportSection({
   };
 
   const applyPreview = async () => {
-    if (!pending || inFlight.current) return;
+    if (!pending || inFlight.current || jobActive) return;
     if (
       editorTab === "json" &&
       jsonDraft !== JSON.stringify(pending, null, 2)
@@ -339,6 +450,7 @@ export function SmartImportSection({
       setWarnings(checked.warnings);
       onPrepared(checked.data, recognizedCity, cropPoster, coverPoster, summary());
       transferred = true;
+      try { window.localStorage.removeItem(AI_JOB_KEY); } catch { /* The imported draft is already available. */ }
     } catch (cause) {
       if (!transferred) {
         if (cropPoster) URL.revokeObjectURL(cropPoster.url);
@@ -428,12 +540,14 @@ export function SmartImportSection({
           <div className="smart-mode-tabs">
             <button
               className={sourceMode === "weibo" ? "selected" : ""}
+              disabled={jobActive}
               onClick={() => setSourceMode("weibo")}
             >
               从微博获取
             </button>
             <button
               className={sourceMode === "upload" ? "selected" : ""}
+              disabled={jobActive}
               onClick={() => setSourceMode("upload")}
             >
               本地上传图片
@@ -475,13 +589,14 @@ export function SmartImportSection({
                 <input
                   type="url"
                   value={url}
+                  disabled={jobActive}
                   onChange={(event) => setUrl(event.target.value)}
                   placeholder="https://weibo.com/..."
                 />
               </label>
               <button
                 className="secondary-button"
-                disabled={!!busy || !url.trim() || !cookie.trim()}
+                disabled={!!busy || jobActive || !url.trim() || !cookie.trim()}
                 onClick={() => void fetchPost()}
               >
                 {busy === "weibo" ? "正在获取微博…" : "获取微博"}
@@ -521,6 +636,7 @@ export function SmartImportSection({
                       : "上传活动封面（可选）"}
                   <input
                     type="file"
+                    disabled={jobActive}
                     accept="image/jpeg,image/png,image/webp"
                     onChange={(event) => {
                       void addLocal(event.target.files?.[0], role);
@@ -535,6 +651,7 @@ export function SmartImportSection({
             微博正文 / 时间表文字
             <textarea
               value={postText}
+              disabled={jobActive}
               onChange={(event) => setPostText(event.target.value)}
               placeholder="例如：14:00 Gara\n14:20 眩晕症Megrims\n14:40 Koisa"
             />
@@ -556,6 +673,7 @@ export function SmartImportSection({
                       <button
                         key={role}
                         className={roles[role] === image.id ? "selected" : ""}
+                        disabled={jobActive}
                         onClick={() =>
                           setRoles((current) => ({
                             ...current,
@@ -604,13 +722,13 @@ export function SmartImportSection({
         </p>
       )}
       <label className="ai-crop-debug-choice">
-        <input type="checkbox" checked={debugMode} disabled={!!busy} onChange={(event) => setDebugMode(event.target.checked)} />
+        <input type="checkbox" checked={debugMode} disabled={!!busy || jobActive} onChange={(event) => setDebugMode(event.target.checked)} />
         AI Crop Debug（下次识别保留 rawCrop 和实际 AI 输入图；可能增加响应体积）
       </label>
       <button
         className="primary-button"
         disabled={
-          !!busy || configured === false || (!timetable && !postText.trim())
+          !!busy || configured === false || jobActive || (!timetable && !postText.trim())
         }
         onClick={() => void recognize("normal")}
       >
@@ -619,11 +737,33 @@ export function SmartImportSection({
       {busy === "ai" && <p className="sheet-description" role="status">图片较多时识别可能需要几分钟，请保持页面打开。</p>}
       <button
         className="secondary-button"
-        disabled={!!busy || configured === false || (!timetable && !postText.trim())}
+        disabled={!!busy || configured === false || jobActive || (!timetable && !postText.trim())}
         onClick={() => void recognize("high")}
       >
         高精度识别 Timetable
       </button>
+      {job && <section className="ai-job-card" aria-live="polite">
+        <strong>AI 识别任务</strong>
+        <p>{job.status === "queued" ? `排队中 · 第 ${Math.max(1, job.queuePosition)} 位` : job.status === "running" ? "服务器正在识别…" : job.status === "completed" ? "识别完成 · 请核对下方草稿" : "识别失败 · 可查看原始响应后重试"}</p>
+        <small>任务 {job.id.slice(0, 8)} · {job.mode === "high" ? "高精度" : "普通"}模式。关闭页面后任务仍会在服务器继续。</small>
+        {job.sourceUrl && <small>来源：{job.sourceUrl}</small>}
+        {(job.model || job.provider || job.finishReason) && <small>模型：{job.model ?? "识别中"}{job.provider ? ` · ${job.provider}` : ""}{job.finishReason ? ` · 结束原因 ${job.finishReason}` : ""}</small>}
+        {job.outputTokens !== undefined && <small>输出 {job.outputTokens} tokens{job.reasoningTokens !== undefined ? `（推理 ${job.reasoningTokens}）` : ""}</small>}
+        {job.error && <p className="form-error" role="alert">{job.error.message}</p>}
+        {job.hasRawResponse && <div className="ai-job-actions">
+          {job.rawComplete === false && <small>响应在传输中中断，以下仅是已收到的部分内容。</small>}
+          <button type="button" className="text-button" disabled={rawLoading} onClick={() => void showRawResponse()}>{rawLoading ? "读取中…" : "查看 AI 原始响应"}</button>
+          <a href={`/api/admin/ai/jobs/${job.id}/raw?download=1`}>下载原始响应</a>
+        </div>}
+        {rawResponse && <pre className="ai-raw-response">{rawResponse}</pre>}
+      </section>}
+      {recentJobs.length > 0 && <details className="ai-job-history">
+        <summary>最近 AI 任务（保留 30 天）</summary>
+        {recentJobs.slice(0, 8).map((item) => <div className="ai-job-history-row" key={item.id}>
+          <span>{new Date(item.createdAt).toLocaleString("zh-CN")} · {item.mode === "high" ? "高精度" : "普通"} · {item.status === "queued" ? "排队中" : item.status === "running" ? "识别中" : item.status === "completed" ? "已完成" : "失败"}{item.sourceUrl ? ` · ${item.sourceUrl.split("/").pop()}` : ""}</span>
+          <button type="button" className="text-button" disabled={item.id === activeJobId} onClick={() => resumeJob(item.id)}>查看任务</button>
+        </div>)}
+      </details>}
       <button
         className="text-button"
         disabled={!!busy}
@@ -728,7 +868,7 @@ export function SmartImportSection({
           )}
           <button
             className="primary-button"
-            disabled={!!busy}
+            disabled={!!busy || jobActive}
             onClick={() => void applyPreview()}
           >
             {busy === "preview" ? "正在生成预览…" : "应用修改并生成导入预览"}

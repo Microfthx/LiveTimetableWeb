@@ -6,7 +6,7 @@
 
 1. 选择「从微博获取」或「本地上传图片」。微博模式需要单条博文 HTTPS 链接和当前有效的 Cookie Header；只读取该博文，不扫描账号、评论或时间线。正文可直接作为时间表来源。
 2. 为图片选择「时间表」「团体图」「活动封面」角色。同一图片可担任多个角色。没有时间表图片时，只要正文非空即可启动 AI；没有团体图时，默认用时间表图片；没有任何图片时，所有 crop 为 0，封面显示占位图。
-3. 点击「AI 识别 Timetable」才发起一次 OpenRouter Chat Completions API 请求。时间表图片与团体图若相同只发送一次，若不同则在一次请求中分别标记 IMAGE A/B。若正文与管理员指定的时间表图片冲突，以图片为准；没有时间表图片则正文为主要时间来源。单独的活动封面作为 IMAGE C 提供城市、活动标题和场地线索，不用于时间表或 crop。若未指定封面但还有未使用的微博图片，第一张作为城市参考图；它不会自动成为活动封面。
+3. 点击「AI 识别 Timetable」后，`POST /api/admin/ai/jobs` 立即返回任务 ID；服务器逐个处理任务，浏览器通过 `GET /api/admin/ai/jobs/:id` 查询进度。时间表图片与团体图若相同只发送一次，若不同则在一次 OpenRouter Chat Completions 请求中分别标记 IMAGE A/B。若正文与管理员指定的时间表图片冲突，以图片为准；没有时间表图片则正文为主要时间来源。单独的活动封面作为 IMAGE C 提供城市、活动标题和场地线索，不用于时间表或 crop。若未指定封面但还有未使用的微博图片，第一张作为城市参考图；它不会自动成为活动封面。
 4. AI 在同一次 Structured Output 中输出 EventData v1.0 字段和顶层城市元数据 `city`。城市只从图片或正文中的明确地点识别，无法确认时留空。后端把 `city` 与 EventData 分离，把 `delay_minutes` 强制设为 0，并以团体图真实像素尺寸覆盖 `poster.width/height`。结果仅进入待检查草稿，不自动创建活动；AI 响应返回后立即预填现有城市输入框，管理员手动填写的城市不会被覆盖。
 5. 管理员在可视化编辑或 JSON 编辑中修正活动、团名、时间和 crop；可增删团体。非法 JSON 仅留在独立文本草稿，不覆盖上一个合法数据。点击「应用修改并生成导入预览」后排序并重新编号，复用现有裁剪、Overlay 和导入预览。最终确认才调用原有 `POST /api/admin/activities`。
 
@@ -26,7 +26,9 @@
 
 在 API 服务的私有环境文件中设置 `OPENROUTER_API_KEY`、`OPENROUTER_OCR_MODEL`、`OPENROUTER_OCR_MODEL_HIGH`；普通识别使用 `z-ai/glm-5.3-flash`，高精度识别使用 `qwen/qwen3.8-27b`。不要使用 `VITE_` 前缀或提交真实值。模型须支持图像理解与 JSON Schema Structured Outputs。没有 Key 时微博读取和手动 JSON 仍可用，AI 按钮提示未配置。服务器需安装 `image-size` 生产依赖，`/api/` 的请求体上限为 80 MB。所有微博与 AI 接口都沿用管理员 HttpOnly session、写请求来源校验和基础限流。OpenRouter 单独计费，不使用 ChatGPT Plus 订阅额度。
 
-较长的图片时间表可能在 HTTP 200 响应头到达后仍持续生成响应体。API 为整次 OpenRouter 请求保留 240 秒，9999 端口 Nginx 的 `/api/` 读取超时设为 270 秒；响应体在读取阶段超时会明确报告 AI 超时。人工复制的 OCR Prompt 则优先要求聊天模型生成可下载的 `.json` 文件；自动导入仍读取 OpenRouter JSON API 响应，不依赖附件。
+较长的图片时间表可能在 HTTP 200 响应头到达后仍持续生成响应体。队列任务的 OpenRouter 请求上限为 10 分钟；旧同步兼容接口仍为 240 秒，9999 端口 Nginx 的 `/api/` 读取超时为 270 秒。浏览器不再为队列任务保持长连接，关掉页面后任务继续运行；OpenRouter 自身仍可能超时，此时任务显示失败原因。人工复制的 OCR Prompt 优先要求聊天模型生成可下载的 `.json` 文件；自动导入仍读取 OpenRouter JSON API 响应，不依赖附件。
+
+每个 AI 任务在 `DATA_DIR/ai-jobs/<UUID>/` 保存输入素材、任务状态、成功结果和收到的 OpenRouter 原始响应。原始响应在解析及 EventData 校验前落盘，因此模型返回截断、无效 JSON 或非 200 错误时仍可由管理员查看或下载；响应体若在传输中断，已收到的部分也会保存并标记为不完整。任务只通过管理员鉴权接口访问，保留 30 天，排队中任务在服务重启后继续；运行中被重启打断的任务标记失败，避免静默重复计费。队列同时只运行一个任务，最多容纳 10 个排队或运行中的任务；相同输入的活跃任务复用同一 ID。管理员可从最近任务列表恢复草稿及对应图片。原始响应仅供诊断，不直接覆盖当前活动。
 
 普通模式的 GLM-5.3 Flash 请求使用 `reasoning.effort: "low"`，减少结构化提取时大量内部推理耗尽输出预算的概率；仍保留 `response_format: json_schema` 与 `provider.require_parameters: true`。`finish_reason: "length"` 明确报告输出被截断，并记录模型、provider、token 用量和耗时等非敏感诊断信息。高精度 Qwen 按原参数请求，普通识别失败时也可在界面直接选择高精度识别；两种结果都进入人工检查草稿。
 

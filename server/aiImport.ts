@@ -20,6 +20,14 @@ export class AiImportError extends Error {
   }
 }
 
+export interface AiUpstreamResponse {
+  status: number;
+  contentType: string | null;
+  requestId: string | null;
+  body: string;
+  complete: boolean;
+}
+
 const cropSchema = {
   type: "object",
   additionalProperties: false,
@@ -167,6 +175,8 @@ export async function recognizeEvent(input: {
   highModel?: string;
   fetchImpl?: typeof fetch;
   debug?: boolean;
+  timeoutMs?: number;
+  onResponse?: (response: AiUpstreamResponse) => Promise<void>;
 }): Promise<{
   data: EventData;
   city: string;
@@ -221,7 +231,7 @@ export async function recognizeEvent(input: {
         provider: { require_parameters: true },
         ...(model === "z-ai/glm-5.3-flash" ? { reasoning: { effort: "low" } } : {}),
       }),
-      signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(input.timeoutMs ?? AI_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
@@ -231,6 +241,45 @@ export async function recognizeEvent(input: {
       502,
     );
   }
+  let responseText = "";
+  const upstream = (complete: boolean): AiUpstreamResponse => ({
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    requestId: response.headers.get("x-request-id"),
+    body: responseText,
+    complete,
+  });
+  try {
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        responseText += decoder.decode(chunk.value, { stream: true });
+      }
+      responseText += decoder.decode();
+    } else responseText = await response.text();
+  } catch (error) {
+    if (responseText && input.onResponse) {
+      try { await input.onResponse(upstream(false)); }
+      catch (saveError) { console.error("Partial AI response save failed", saveError); }
+    }
+    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    const code = timeout ? "AI_TIMEOUT" : "AI_INVALID_OUTPUT";
+    console.warn("AI response read failed", {
+      model, code, upstreamStatus: response.status,
+      contentType: response.headers.get("content-type"),
+      errorName: error instanceof Error ? error.name : "unknown",
+      latencyMs: Date.now() - started,
+    });
+    throw new AiImportError(
+      code,
+      timeout ? "AI 识别超时，请重试或使用手动 JSON。" : "AI 返回的结果无法读取，请重试或使用手动 JSON。",
+      502,
+    );
+  }
+  await input.onResponse?.(upstream(true));
   if (!response.ok) {
     const code = response.status === 401 ? "AI_AUTH_ERROR"
       : response.status === 403 ? "AI_PROVIDER_RESTRICTED"
@@ -252,23 +301,10 @@ export async function recognizeEvent(input: {
     provider?: string;
   };
   try {
-    completion = await response.json();
+    completion = JSON.parse(responseText);
   } catch (error) {
-    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    const code = timeout ? "AI_TIMEOUT" : "AI_INVALID_OUTPUT";
-    console.warn("AI response read failed", {
-      model,
-      code,
-      upstreamStatus: response.status,
-      contentType: response.headers.get("content-type"),
-      errorName: error instanceof Error ? error.name : "unknown",
-      latencyMs: Date.now() - started,
-    });
-    throw new AiImportError(
-      code,
-      timeout ? "AI 识别超时，请重试或使用手动 JSON。" : "AI 返回的结果无法读取，请重试或使用手动 JSON。",
-      502,
-    );
+    console.warn("AI response JSON invalid", { model, upstreamStatus: response.status, errorName: error instanceof Error ? error.name : "unknown", latencyMs: Date.now() - started });
+    throw new AiImportError("AI_INVALID_OUTPUT", "AI 返回的结果无法读取，请重试或使用手动 JSON。", 502);
   }
   const choice = completion.choices?.[0];
   if (!choice?.message?.content || choice.finish_reason === "length") {

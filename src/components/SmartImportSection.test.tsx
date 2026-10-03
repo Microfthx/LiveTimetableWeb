@@ -13,16 +13,30 @@ import { ImportBottomSheet } from "./Sheets";
 
 const recognize = vi.hoisted(() => vi.fn());
 const parsePost = vi.hoisted(() => vi.fn());
+const jobState = vi.hoisted(() => ({ result: null as unknown, input: null as { weiboText: string } | null, getJobGate: null as Promise<void> | null }));
 vi.mock("../utils/activitiesApi", () => ({
   aiStatus: () => Promise.resolve({ configured: true }),
   parseWeibo: parsePost,
-  recognizeTimetable: recognize,
+  listAiJobs: () => Promise.resolve([]),
+  getAiJobRaw: () => Promise.resolve("{}"),
+  submitAiJob: async (input: { weiboText: string }) => {
+    jobState.input = input;
+    jobState.result = await recognize(input);
+    return { id: "11111111-1111-4111-8111-111111111111", status: "queued", mode: "normal", createdAt: new Date().toISOString(), queuePosition: 1, hasRawResponse: false };
+  },
+  getAiJob: async () => { if (jobState.getJobGate) await jobState.getJobGate; return ({
+    id: "11111111-1111-4111-8111-111111111111", status: "completed", mode: "normal", createdAt: new Date().toISOString(), queuePosition: 0,
+    hasRawResponse: false, postText: jobState.input?.weiboText ?? "", sources: { timetable: null, crop: null, cover: null }, result: jobState.result,
+  }); },
   listGroups: () => Promise.resolve([]),
 }));
 afterEach(() => {
   cleanup();
   recognize.mockReset();
   parsePost.mockReset();
+  jobState.result = null;
+  jobState.input = null;
+  jobState.getJobGate = null;
   window.localStorage.clear();
 });
 
@@ -118,6 +132,23 @@ it("offers high precision recognition after normal recognition fails", async () 
   fireEvent.click(screen.getByRole("button", { name: "高精度识别 Timetable" }));
   await waitFor(() => expect(recognize).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "high" })));
   await screen.findByText("人工检查 AI 识别结果");
+});
+
+it("keeps a submitted job across a page remount and restores its result", async () => {
+  let release!: () => void;
+  jobState.getJobGate = new Promise<void>((resolve) => { release = resolve; });
+  recognize.mockResolvedValue({ data: demoData, city: "厦门", warnings: [], model: "test-model", mode: "normal" });
+  const props = { onPrepared: () => undefined, onCityRecognized: () => undefined, onManual: () => undefined, manualRequest: 0 };
+  const first = render(<SmartImportSection {...props} />);
+  fireEvent.change(screen.getByPlaceholderText(/14:00 Gara/), { target: { value: "14:00 Gara" } });
+  fireEvent.click(await screen.findByRole("button", { name: "AI 识别 Timetable" }));
+  await screen.findByText(/排队中/);
+  expect(window.localStorage.getItem("live-idol-ai-job-id")).toBe("11111111-1111-4111-8111-111111111111");
+  first.unmount();
+  render(<SmartImportSection {...props} />);
+  release();
+  await screen.findByText("人工检查 AI 识别结果");
+  expect(screen.getByText(/城市：厦门/)).toBeTruthy();
 });
 
 it("edits an existing activity visually while keeping JSON as the default", async () => {

@@ -10,6 +10,7 @@ import type { GroupBindings, GroupLibraryRecord } from "../src/types/groupLibrar
 import { canonicalGroupName, exactGroupBindings, groupMatchKey } from "../src/utils/groupMatching.js";
 import { validateEventData } from "../src/utils/validation.js";
 import { AiImportError, recognizeEvent, type AiImage } from "./aiImport.js";
+import { createAiJobQueue, type AiJobInput, type AiJobRunner } from "./aiJobs.js";
 import { createWeiboStore, fetchWeiboGroupProfile, profileUidFromUrl, WeiboError } from "./weibo.js";
 
 const MAX_BODY_BYTES = 80 * 1024 * 1024;
@@ -124,7 +125,7 @@ async function streamImage(response: ServerResponse, filename: string, mime: str
   });
 }
 
-export async function createActivitiesServer(options: { dataDir: string; adminAccessKey: string; adminSessionSecret: string }) {
+export async function createActivitiesServer(options: { dataDir: string; adminAccessKey: string; adminSessionSecret: string; aiJobRunner?: AiJobRunner }) {
   const { dataDir, adminAccessKey, adminSessionSecret } = options;
   if (!adminAccessKey || adminSessionSecret.length < 32) throw new Error("ADMIN_ACCESS_KEY and a 32+ character ADMIN_SESSION_SECRET are required");
   await mkdir(dataDir, { recursive: true });
@@ -154,6 +155,14 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     try { await job; } finally { thumbnailJobs.delete(filename); }
   }
   const weiboStore = createWeiboStore(dataDir);
+  const aiJobs = await createAiJobQueue(dataDir, options.aiJobRunner ?? ((input, onResponse) => recognizeEvent({
+    ...input,
+    apiKey: process.env.OPENROUTER_API_KEY,
+    normalModel: process.env.OPENROUTER_OCR_MODEL,
+    highModel: process.env.OPENROUTER_OCR_MODEL_HIGH,
+    timeoutMs: 10 * 60_000,
+    onResponse,
+  })));
   let activities: StoredActivity[];
   try {
     const saved = JSON.parse(await readFile(storePath, "utf8"));
@@ -371,6 +380,23 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
     }
     throw new HttpError(400, "AI 图片来源无效。");
   }
+  async function aiJobInput(input: Record<string, unknown>): Promise<AiJobInput> {
+    if (input.mode !== "normal" && input.mode !== "high") throw new HttpError(400, "AI 模式无效。");
+    if (input.weiboText !== undefined && (typeof input.weiboText !== "string" || input.weiboText.length > 20_000))
+      throw new HttpError(400, "微博正文不能超过 20000 字符。");
+    if (input.weiboUrl !== undefined && (typeof input.weiboUrl !== "string" || input.weiboUrl.length > 2048 || !/^https:\/\/(?:(?:www\.)?weibo\.com|(?:m\.)?weibo\.cn)\//.test(input.weiboUrl)))
+      throw new HttpError(400, "微博来源链接无效。");
+    const timetable = await aiSource(input.timetableSource);
+    const crop = input.cropSource === undefined || JSON.stringify(input.cropSource) === JSON.stringify(input.timetableSource)
+      ? timetable : await aiSource(input.cropSource);
+    const cover = input.coverSource === undefined || input.coverSource === null ? null
+      : JSON.stringify(input.coverSource) === JSON.stringify(input.timetableSource) ? timetable
+      : JSON.stringify(input.coverSource) === JSON.stringify(input.cropSource) ? crop
+      : await aiSource(input.coverSource);
+    if (!timetable && !(input.weiboText as string | undefined)?.trim())
+      throw new AiImportError("AI_SOURCE_REQUIRED", "请选择时间表图片，或提供包含时间表的微博正文。");
+    return { timetable, crop, cover, postText: String(input.weiboText ?? ""), sourceUrl: input.weiboUrl as string | undefined, mode: input.mode, debug: input.debug === true };
+  }
 
   return createServer(async (request, response) => {
     try {
@@ -430,6 +456,38 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         requireAdmin(request);
         sendJson(response, 200, { configured: !!(process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_OCR_MODEL) }); return;
       }
+      if (method === "GET" && path === "/api/admin/ai/jobs") {
+        requireAdmin(request);
+        sendJson(response, 200, aiJobs.list()); return;
+      }
+      const aiJobPath = new RegExp(`^/api/admin/ai/jobs/(${ID_PATTERN})$`).exec(path);
+      if (method === "GET" && aiJobPath) {
+        requireAdmin(request);
+        const job = await aiJobs.get(aiJobPath[1]);
+        if (!job) throw new HttpError(404, "AI 任务不存在或记录已过期。");
+        sendJson(response, 200, job); return;
+      }
+      const aiJobRawPath = new RegExp(`^/api/admin/ai/jobs/(${ID_PATTERN})/raw$`).exec(path);
+      if (method === "GET" && aiJobRawPath) {
+        requireAdmin(request);
+        const raw = await aiJobs.raw(aiJobRawPath[1]);
+        if (!raw) throw new HttpError(404, "AI 原始响应尚未保存或记录已过期。");
+        response.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          ...(new URL(request.url ?? "/", "http://localhost").searchParams.get("download") === "1"
+            ? { "Content-Disposition": `attachment; filename="ai-response-${aiJobRawPath[1]}.txt"` } : {}),
+        });
+        response.end(raw.body); return;
+      }
+      const aiJobSourcePath = new RegExp(`^/api/admin/ai/jobs/(${ID_PATTERN})/sources/(timetable|crop|cover)$`).exec(path);
+      if (method === "GET" && aiJobSourcePath) {
+        requireAdmin(request);
+        const source = await aiJobs.source(aiJobSourcePath[1], aiJobSourcePath[2] as "timetable" | "crop" | "cover");
+        if (!source) throw new HttpError(404, "AI 任务图片不存在。");
+        await streamImage(response, source.filename, source.mime); return;
+      }
       const importAssetPath = /^\/api\/admin\/weibo\/import-assets\/([a-f0-9-]{36})\/(image_\d{3})$/.exec(path);
       if (method === "GET" && importAssetPath) {
         requireAdmin(request);
@@ -476,22 +534,17 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
         }
         return;
       }
+      if (method === "POST" && path === "/api/admin/ai/jobs") {
+        limitImport(request, "ai");
+        const input = await aiJobInput(await readJson(request));
+        sendJson(response, 202, await aiJobs.add(input));
+        return;
+      }
       if (method === "POST" && path === "/api/admin/ai/parse-poster") {
         limitImport(request, "ai");
-        const input = await readJson(request);
-        if (input.mode !== "normal" && input.mode !== "high") throw new HttpError(400, "AI 模式无效。");
-        if (input.weiboText !== undefined && (typeof input.weiboText !== "string" || input.weiboText.length > 20_000))
-          throw new HttpError(400, "微博正文不能超过 20000 字符。");
-        const timetable = await aiSource(input.timetableSource);
-        const crop = input.cropSource === undefined || JSON.stringify(input.cropSource) === JSON.stringify(input.timetableSource)
-          ? timetable : await aiSource(input.cropSource);
-        const cover = input.coverSource === undefined || input.coverSource === null ? null
-          : JSON.stringify(input.coverSource) === JSON.stringify(input.timetableSource) ? timetable
-          : JSON.stringify(input.coverSource) === JSON.stringify(input.cropSource) ? crop
-          : await aiSource(input.coverSource);
+        const { timetable, crop, cover, postText, mode, debug } = await aiJobInput(await readJson(request));
         const result = await recognizeEvent({
-          timetable, crop, cover, postText: String(input.weiboText ?? ""), mode: input.mode,
-          debug: input.debug === true,
+          timetable, crop, cover, postText, mode, debug,
           apiKey: process.env.OPENROUTER_API_KEY,
           normalModel: process.env.OPENROUTER_OCR_MODEL,
           highModel: process.env.OPENROUTER_OCR_MODEL_HIGH,
