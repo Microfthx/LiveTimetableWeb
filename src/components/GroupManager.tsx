@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ImageUp, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { GroupLibraryRecord } from "../types/groupLibrary";
 import { createGroup, deleteGroup, importWeiboGroupProfile, listGroups, updateGroup, type GroupDraft } from "../utils/activitiesApi";
+import { groupNameFromWeiboHandle } from "../utils/groupMatching";
 
 const emptyDraft = (): GroupDraft => ({ name: "", weiboUid: "", weiboUrl: "" });
 const weiboCookie = () => { try { return localStorage.getItem("live-idol-weibo-cookie") ?? ""; } catch { return ""; } };
@@ -66,7 +67,7 @@ export function GroupManager() {
     setBusy(true); setError("");
     try {
       const profile = await importWeiboGroupProfile(draft.weiboUrl, cookie);
-      setDraft((previous) => previous && ({ ...previous, name: previous.name.trim() || profile.name, weiboUid: profile.weiboUid, weiboUrl: profile.weiboUrl,
+      setDraft((previous) => previous && ({ ...previous, name: previous.name.trim() || groupNameFromWeiboHandle(profile.name), weiboUid: profile.weiboUid, weiboUrl: profile.weiboUrl,
         ...(profile.avatarSourceUrl ? { avatarSourceUrl: profile.avatarSourceUrl } : {}),
         ...(profile.avatarDataUrl ? { avatarDataUrl: profile.avatarDataUrl } : {}) }));
       if (profile.avatarDataUrl) setImagePreview(profile.avatarDataUrl);

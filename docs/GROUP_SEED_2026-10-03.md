@@ -64,4 +64,17 @@
 
 第二轮新增 8 个团体和 8 张缓存头像，为 14 场活动补充 20 条绑定。服务器此时共有 44 个团体，其中还包括第二轮开始前已有的其他管理员新增记录。第二轮备份是 `/var/lib/live-idol-timetable/activities.before-group-seed-round2-20261003.json`。再次核对 45 场活动的 EventData 均未改动。
 
+## 原帖完整名单补录
+
+重新检查原帖正文的全部 399 个不同账号，而不再只筛选当前活动中已有的团名。其中 395 个昵称主页能核实 UID 和头像，4 个显示“该昵称当前没有人使用”，因此没有猜测 UID 或创建记录。完整的账号、标准团名和 UID 对照见 [WEIBO_GROUP_SEED_2026-10-03.csv](./WEIBO_GROUP_SEED_2026-10-03.csv)。
+
+标准团名只移除账号名**末尾**的 `Official`（不区分大小写）、常见误拼 `offical`，以及紧邻后缀的 `_` / `-`。例如 `DayBreak_official` → `DayBreak`、`SAKASAMA_OFFICIAL` → `SAKASAMA`、`StarHoneyOfficial` → `StarHoney`。名称中间的 `Official` 和其它标识保留；不改活动里的 OCR 团名。395 个可核实账号中有 204 个按此规则修改了标准名，没有出现标准名或 UID 冲突。以后在管理页从微博导入团体时，同样默认建议去后缀的标准名，管理员仍可编辑。
+
+本轮新增 351 个团体及缓存头像，团体库共 395 个；为 42 场活动新增 211 条精确绑定。395 张头像均保存在服务器，并且新增 351 张的公开头像接口已逐一验证。45 场活动的 EventData 与补录前备份完全一致。服务器备份：
+
+- `/var/lib/live-idol-timetable/activities.before-full-post-seed-20261003.json`
+- `/var/lib/live-idol-timetable/groups.before-full-post-seed-20261003.json`
+
+原帖中无法继续通过昵称主页核实的 4 个账号：放逐藍星、星降之夜_Midnight、爱恋契约_Official、X_ARCHIVE待归档。
+
 微博 Cookie 仅用于这次读取微博资料及下载头像，没有保存在仓库、团体库或活动记录中。
