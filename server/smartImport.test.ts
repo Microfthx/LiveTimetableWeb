@@ -240,7 +240,7 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
         event: { title: "测试活动", date: "2026-10-02", venue: "测试场地", doors_time: "", start_time: "14:00" },
         delay_minutes: 0,
         poster: { width: 0, height: 0 },
-        groups: [{ id: "group_001", name: "Gara", start_time: "14:00", end_time: "14:20", benefit_type: "normal", benefit_time_start: "14:30", benefit_time_end: "15:00", crop: { x: 0, y: 0, width: 1, height: 1 } }],
+        groups: [{ id: "group_001", name: "Gara", start_time: "14:00", end_time: "14:20", benefit_type: "normal", benefit_time_start: "14:30", benefit_time_end: "15:00", crop: { x: 0.123, y: 0.456, width: 0.3, height: 0.2 } }],
       }) } }],
       usage: { prompt_tokens: 10, completion_tokens: 20 },
     }), { headers: { "Content-Type": "application/json" } });
@@ -265,7 +265,7 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
   expect(result.data.groups[0].benefit_time_start).toBe("14:30");
   expect(result.city).toBe("厦门");
   expect(result.data).not.toHaveProperty("city");
-  expect(result.debug?.groups[0].rawCrop).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.debug?.groups[0].rawCrop).toEqual({ x: 0.123, y: 0.456, width: 0.3, height: 0.2 });
   expect(result.debug?.aiInput).toMatchObject({
     dataUrl: `data:image/png;base64,${tinyPng.toString("base64")}`,
     width: 1, height: 1, resize: false, aspectRatioPreserved: true,
