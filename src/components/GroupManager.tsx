@@ -21,6 +21,7 @@ export function GroupManager() {
   const [editing, setEditing] = useState<GroupLibraryRecord | null>(null);
   const [draft, setDraft] = useState<GroupDraft | null>(null);
   const [cookie, setCookie] = useState(weiboCookie);
+  const [rememberCookie, setRememberCookie] = useState(() => Boolean(weiboCookie()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -28,6 +29,12 @@ export function GroupManager() {
 
   const refresh = async () => setGroups(await listGroups());
   useEffect(() => { void refresh().catch(() => setError("团体库加载失败，请刷新重试。")); }, []);
+  useEffect(() => {
+    try {
+      if (rememberCookie && cookie.trim()) localStorage.setItem("live-idol-weibo-cookie", cookie);
+      else localStorage.removeItem("live-idol-weibo-cookie");
+    } catch { /* Browsers may deny storage; the current input still works. */ }
+  }, [cookie, rememberCookie]);
   const open = (group?: GroupLibraryRecord) => {
     setEditing(group ?? null);
     setDraft(group ? { name: group.name, weiboUid: group.weiboUid ?? "", weiboUrl: group.weiboUrl ?? "", avatarSourceUrl: group.avatarSourceUrl ?? "" } : emptyDraft());
@@ -82,7 +89,8 @@ export function GroupManager() {
       <div className="group-manager-editor-card"><h3>{editing ? "编辑团体" : "新增团体"}</h3>
         <label>标准团体名 *<input value={draft.name} maxLength={120} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
         <label>微博主页链接<input type="url" value={draft.weiboUrl ?? ""} placeholder="https://weibo.com/u/123456789" onChange={(event) => setDraft({ ...draft, weiboUrl: event.target.value })} /></label>
-        <label>微博 Cookie（仅用于此次读取）<input type="password" value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder="留空时使用当前浏览器已保存的 Cookie" /></label>
+        <label>微博 Cookie（用于读取资料）<input type="password" value={cookie} onChange={(event) => setCookie(event.target.value)} placeholder="可使用当前浏览器已保存的 Cookie" /></label>
+        <label className="group-manager-remember"><input type="checkbox" checked={rememberCookie} onChange={(event) => setRememberCookie(event.target.checked)} /> 在此浏览器记住微博 Cookie</label>
         <button className="secondary-button" onClick={() => void importProfile()} disabled={!draft.weiboUrl?.trim() || busy}><RefreshCw size={16} /> 从微博导入 / 更新资料</button>
         <label>微博 UID<input inputMode="numeric" value={draft.weiboUid ?? ""} onChange={(event) => setDraft({ ...draft, weiboUid: event.target.value })} /></label>
         <div className="group-manager-avatar">{imagePreview ? <img src={imagePreview} alt="团体头像预览" /> : <span className="group-manager-placeholder">✦</span>}
