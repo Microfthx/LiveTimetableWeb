@@ -1454,6 +1454,28 @@ p {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ai-crop-debug-choice { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0; font-size: 12px; line-height: 1.4; color: #38536b; }
+.ai-crop-debug-choice input { flex: 0 0 auto; width: 18px; height: 18px; margin: 0; }
+.ai-crop-debug { margin: 16px 0; padding: 12px; border: 1px solid #8ccbd2; border-radius: 14px; background: #f3fbfc; }
+.ai-crop-debug summary { cursor: pointer; font-weight: 800; color: #153951; }
+.ai-crop-debug p { font-size: 12px; line-height: 1.5; }
+.ai-crop-debug h4 { margin: 12px 0 7px; font-size: 13px; color: #183653; }
+.ai-crop-debug-facts { display: grid; gap: 5px; padding: 8px; border-radius: 9px; background: white; font-size: 11px; overflow-wrap: anywhere; }
+.ai-crop-debug-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ai-crop-debug-images section { min-width: 0; }
+.ai-crop-debug-overlay { position: relative; width: 100%; overflow: hidden; background: white; }
+.ai-crop-debug-overlay > img { display: block; width: 100%; height: auto; }
+.ai-crop-debug-box { position: absolute; border: 2px solid #f03782; background: rgba(240, 55, 130, .12); }
+.ai-crop-debug-box > span { position: absolute; top: 0; left: 0; max-width: 100%; padding: 1px 3px; background: #df226c; color: white; font-size: 9px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-crop-debug-results { display: grid; gap: 7px; }
+.ai-crop-debug-result { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 9px; align-items: start; padding: 7px; border-radius: 9px; background: white; min-width: 0; }
+.ai-crop-debug-result img, .ai-crop-debug-empty { width: 82px; min-height: 46px; max-height: 90px; object-fit: contain; border-radius: 5px; background: #e6f3f5; }
+.ai-crop-debug-empty { display: grid; place-items: center; font-size: 10px; color: #657b8d; }
+.ai-crop-debug-result div:last-child { min-width: 0; overflow-wrap: anywhere; }
+.ai-crop-debug-result strong, .ai-crop-debug-result small { display: block; }
+.ai-crop-debug-result strong { font-size: 12px; }
+.ai-crop-debug-result small { margin-top: 3px; color: #40576b; font-size: 10px; line-height: 1.35; }
+@media (max-width: 520px) { .ai-crop-debug-images { grid-template-columns: 1fr; } }
 .export-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;

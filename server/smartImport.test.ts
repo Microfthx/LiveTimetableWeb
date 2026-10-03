@@ -247,6 +247,7 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
   }) as typeof fetch;
   const result = await recognizeEvent({
     timetable: picture, crop: picture, cover: { ...picture }, postText: "14:00 Gara", mode: "normal",
+    debug: true,
     apiKey: "test-secret", normalModel: "google/gemini-2.5-flash", fetchImpl: fakeFetch,
   });
   expect(requests).toHaveLength(1);
@@ -264,6 +265,13 @@ it("recognizes city beside EventData in one strict OpenRouter request", async ()
   expect(result.data.groups[0].benefit_time_start).toBe("14:30");
   expect(result.city).toBe("厦门");
   expect(result.data).not.toHaveProperty("city");
+  expect(result.debug?.groups[0].rawCrop).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  expect(result.debug?.aiInput).toMatchObject({
+    dataUrl: `data:image/png;base64,${tinyPng.toString("base64")}`,
+    width: 1, height: 1, resize: false, aspectRatioPreserved: true,
+    padding: false, centerCrop: false, objectFitOrCssCrop: false,
+  });
+  expect(result.data).not.toHaveProperty("debug");
 });
 
 it("reports OpenRouter credit errors without changing import data", async () => {

@@ -22,6 +22,8 @@ import {
 } from "../utils/poster";
 import { GroupImage, RuntimeImageContext } from "./GroupImage";
 import { SmartImportSection, type SmartSourceSummary } from "./SmartImportSection";
+import { AiCropDebugPanel } from "./AiCropDebugPanel";
+import type { AiCropDebugData } from "../types/aiCropDebug";
 import { EventDataVisualEditor } from "./EventDataVisualEditor";
 
 export function Sheet({
@@ -217,6 +219,8 @@ export function ImportBottomSheet({
   const [importMode, setImportMode] = useState<"smart" | "manual">(smartEnabled ? "smart" : "manual");
   const [manualRequest, setManualRequest] = useState(0);
   const [sourceSummary, setSourceSummary] = useState<SmartSourceSummary | null>(null);
+  const [aiCropDebug, setAiCropDebug] = useState<AiCropDebugData | null>(null);
+  const [debugOriginal, setDebugOriginal] = useState<{ width: number; height: number } | null>(null);
   const [city, setCity] = useState(initialCity);
   const cityEditedRef = useRef(Boolean(initialCity.trim()));
   const [candidate, setCandidate] = useState<{
@@ -445,7 +449,7 @@ export function ImportBottomSheet({
         onChange={(event) => { cityEditedRef.current = !!event.target.value.trim(); setCity(event.target.value); onDirtyChange?.(true); }} placeholder="例如：厦门" disabled={processing} />
       {showDisplayPosterEditor && <div className="cover-editor"><strong>活动列表封面</strong>{displayPoster && <img src={displayPoster.url} alt="当前活动列表封面" />}<button className="secondary-button" disabled={processing} onClick={() => displayPosterFileRef.current?.click()}>更换活动封面</button>{coverReplacementPending && <p className="form-warning">新活动封面尚未保存。</p>}<input ref={displayPosterFileRef} type="file" className="visually-hidden" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPoster(file).then((source) => { onDisplayPosterSelect?.(source); onDirtyChange?.(true); setError(""); }).catch((cause) => setError(cause instanceof Error ? cause.message : "封面读取失败。")); event.target.value = ""; }} /></div>}
       {smartEnabled && <div className="smart-mode-tabs import-mode-tabs"><button className={importMode === "smart" ? "selected" : ""} onClick={() => setImportMode("smart")}>智能导入</button><button className={importMode === "manual" ? "selected" : ""} onClick={() => { if (importMode === "smart") setManualRequest((value) => value + 1); }}>手动 JSON</button></div>}
-      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onCityRecognized={(recognizedCity) => { if (!cityEditedRef.current) setCity(recognizedCity); }} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
+      {smartEnabled && <div hidden={importMode !== "smart"}><SmartImportSection onPrepared={prepareSmart} onCityRecognized={(recognizedCity) => { if (!cityEditedRef.current) setCity(recognizedCity); }} onDebug={(debug, original) => { setAiCropDebug(debug); setDebugOriginal(original); }} onManual={useSmartSourcesManually} manualRequest={manualRequest} /></div>}
       <div hidden={importMode !== "manual"}>
       {initialData && <div className="smart-mode-tabs" role="tablist" aria-label="活动编辑方式">
         <button role="tab" aria-selected={editTab === "json"} className={editTab === "json" ? "selected" : ""} onClick={() => setEditTab("json")}>JSON 编辑</button>
@@ -700,6 +704,7 @@ export function ImportBottomSheet({
               ))}
             </div>
           </RuntimeImageContext.Provider>
+          {aiCropDebug && <AiCropDebugPanel debug={aiCropDebug} original={poster} originalAtRequest={debugOriginal} data={data} images={preview.images} />}
           {poster && (
             <details className="crop-overlay-details">
               <summary>检查海报裁剪区域</summary>

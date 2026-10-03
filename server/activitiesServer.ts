@@ -400,6 +400,7 @@ export async function createActivitiesServer(options: { dataDir: string; adminAc
           : await aiSource(input.coverSource);
         const result = await recognizeEvent({
           timetable, crop, cover, postText: String(input.weiboText ?? ""), mode: input.mode,
+          debug: input.debug === true,
           apiKey: process.env.OPENROUTER_API_KEY,
           normalModel: process.env.OPENROUTER_OCR_MODEL,
           highModel: process.env.OPENROUTER_OCR_MODEL_HIGH,

@@ -95,8 +95,9 @@ export async function recognizeTimetable(input: {
   coverSource?: AiSource | null;
   weiboText: string;
   mode: "normal" | "high";
+  debug?: boolean;
 }) {
-  return request<{ data: EventData; city: string; warnings: string[]; model: string; mode: "normal" | "high" }>(
+  return request<{ data: EventData; city: string; warnings: string[]; model: string; mode: "normal" | "high"; debug?: import("../types/aiCropDebug").AiCropDebugData }>(
     "/api/admin/ai/parse-poster", "POST", {
       timetableSource: await sourcePayload(input.timetableSource),
       cropSource: input.cropSource === input.timetableSource ? undefined : await sourcePayload(input.cropSource),
@@ -104,6 +105,7 @@ export async function recognizeTimetable(input: {
         ? await sourcePayload(input.coverSource) : undefined,
       weiboText: input.weiboText,
       mode: input.mode,
+      debug: input.debug === true,
     },
   );
 }

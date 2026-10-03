@@ -1,5 +1,7 @@
 import type { EventData } from "../src/types/timetable.js";
+import type { AiCropDebugData } from "../src/types/aiCropDebug.js";
 import { sanitizeJsonInput, validateEventDataDetailed } from "../src/utils/validation.js";
+import { createHash } from "node:crypto";
 
 export interface AiImage {
   bytes: Buffer;
@@ -162,12 +164,14 @@ export async function recognizeEvent(input: {
   normalModel?: string;
   highModel?: string;
   fetchImpl?: typeof fetch;
+  debug?: boolean;
 }): Promise<{
   data: EventData;
   city: string;
   warnings: string[];
   model: string;
   mode: "normal" | "high";
+  debug?: AiCropDebugData;
 }> {
   if (!input.timetable && !input.postText.trim())
     throw new AiImportError(
@@ -309,5 +313,27 @@ export async function recognizeEvent(input: {
     inputTokens: completion.usage?.prompt_tokens,
     outputTokens: completion.usage?.completion_tokens,
   });
-  return { data, city, warnings, model, mode: input.mode };
+  const debug: AiCropDebugData | undefined = input.debug ? {
+    groups: raw.groups.map((item) => {
+      const group = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      return {
+        id: typeof group.id === "string" ? group.id : "",
+        name: typeof group.name === "string" ? group.name : "",
+        rawCrop: group.crop ?? null,
+      };
+    }),
+    aiInput: {
+      dataUrl: input.crop ? `data:${input.crop.mime};base64,${input.crop.bytes.toString("base64")}` : null,
+      width: input.crop?.width ?? 0,
+      height: input.crop?.height ?? 0,
+      mime: input.crop?.mime ?? null,
+      sha256: input.crop ? createHash("sha256").update(input.crop.bytes).digest("hex") : null,
+      resize: false,
+      aspectRatioPreserved: true,
+      padding: false,
+      centerCrop: false,
+      objectFitOrCssCrop: false,
+    },
+  } : undefined;
+  return { data, city, warnings, model, mode: input.mode, ...(debug ? { debug } : {}) };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, ImageUp, Sparkles } from "lucide-react";
 import type { EventData, PosterSource } from "../types/timetable";
+import type { AiCropDebugData } from "../types/aiCropDebug";
 import {
   aiStatus,
   parseWeibo,
@@ -44,6 +45,7 @@ export interface SmartSourceSummary {
 export function SmartImportSection({
   onPrepared,
   onCityRecognized,
+  onDebug,
   onManual,
   manualRequest,
 }: {
@@ -55,6 +57,7 @@ export function SmartImportSection({
     summary: SmartSourceSummary,
   ) => void;
   onCityRecognized: (city: string) => void;
+  onDebug?: (debug: AiCropDebugData | null, original: { width: number; height: number } | null) => void;
   onManual: (
     crop: PosterSource | null,
     cover: PosterSource | null,
@@ -89,6 +92,7 @@ export function SmartImportSection({
   const [editorTab, setEditorTab] = useState<"visual" | "json">("json");
   const [jsonDraft, setJsonDraft] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
   const localUrls = useRef(new Set<string>());
   const inFlight = useRef(false);
 
@@ -236,6 +240,7 @@ export function SmartImportSection({
     setBusy("ai");
     setError("");
     setNotice("");
+    onDebug?.(null, null);
     try {
       const result = await recognizeTimetable({
         timetableSource: timetable?.source ?? null,
@@ -243,7 +248,9 @@ export function SmartImportSection({
         coverSource: cityContext?.source ?? null,
         weiboText: postText,
         mode: requestedMode,
+        debug: debugMode,
       });
+      onDebug?.(result.debug ?? null, crop ? { width: crop.width, height: crop.height } : null);
       setPending(result.data);
       setRecognizedCity(result.city ?? "");
       onCityRecognized(result.city ?? "");
@@ -590,6 +597,10 @@ export function SmartImportSection({
           AI 自动识别未配置，请使用手动 JSON。微博素材和正文仍可获取。
         </p>
       )}
+      <label className="ai-crop-debug-choice">
+        <input type="checkbox" checked={debugMode} disabled={!!busy} onChange={(event) => setDebugMode(event.target.checked)} />
+        AI Crop Debug（下次识别保留 rawCrop 和实际 AI 输入图；可能增加响应体积）
+      </label>
       <button
         className="primary-button"
         disabled={
