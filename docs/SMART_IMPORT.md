@@ -26,4 +26,6 @@
 
 在 API 服务的私有环境文件中设置 `OPENROUTER_API_KEY`、`OPENROUTER_OCR_MODEL`、`OPENROUTER_OCR_MODEL_HIGH`；普通识别使用 `z-ai/glm-5.3-flash`，高精度识别使用 `qwen/qwen3.8-27b`。不要使用 `VITE_` 前缀或提交真实值。模型须支持图像理解与 JSON Schema Structured Outputs。没有 Key 时微博读取和手动 JSON 仍可用，AI 按钮提示未配置。服务器需安装 `image-size` 生产依赖，`/api/` 的请求体上限为 80 MB。所有微博与 AI 接口都沿用管理员 HttpOnly session、写请求来源校验和基础限流。OpenRouter 单独计费，不使用 ChatGPT Plus 订阅额度。
 
+较长的图片时间表可能在 HTTP 200 响应头到达后仍持续生成响应体。API 为整次 OpenRouter 请求保留 240 秒，9999 端口 Nginx 的 `/api/` 读取超时设为 270 秒；响应体在读取阶段超时会明确报告 AI 超时。人工复制的 OCR Prompt 则优先要求聊天模型生成可下载的 `.json` 文件；自动导入仍读取 OpenRouter JSON API 响应，不依赖附件。
+
 当前微博获取基于单条博文的移动端详情接口；微博若改变接口或要求额外验证，界面会提示失败，管理员可以使用本地图片或手动 JSON 继续。OpenRouter 调用只在管理员点击按钮时发生，失败不清空素材、角色、城市或草稿。

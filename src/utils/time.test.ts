@@ -252,7 +252,8 @@ describe("OCR JSON validation", () => {
     expect(OCR_PROMPT).toContain('"city": ""');
     expect(OCR_PROMPT).toContain('"benefit_type": "none"');
     expect(OCR_PROMPT).toContain(String(new Date().getFullYear()));
-    expect(OCR_PROMPT).toContain("只输出合法 JSON。");
+    expect(OCR_PROMPT).toContain("可下载文件");
+    expect(OCR_PROMPT).toContain("JSON.parse() 解析的合法 JSON 对象");
     const mirror = readFileSync(
       new URL("../../json生成prompt.txt", import.meta.url),
       "utf8",

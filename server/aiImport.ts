@@ -154,6 +154,8 @@ groups 按开始时间排列，id 从 group_001 连续编号。delay_minutes 固
 根据所有已提供图片及微博正文中的活动标题、场地或地址明确识别活动所在城市，输出顶层 city 字符串。活动封面明确写出城市时必须提取，例如写了“西安”就填“西安”；微博正文明确写出城市时也必须提取，不要求图片再次标注。不要根据团名推测城市；若来源冲突，以管理员指定的时间表图为准；无法可靠确定时 city 填空字符串。city 不属于 event。
 poster 宽高由程序覆盖，输出时可填 0。只输出 schema_version、event、delay_minutes、poster、groups、city；不要输出微博信息、解释或推理。`;
 
+const AI_REQUEST_TIMEOUT_MS = 240_000;
+
 export async function recognizeEvent(input: {
   timetable: AiImage | null;
   crop: AiImage | null;
@@ -218,7 +220,7 @@ export async function recognizeEvent(input: {
         },
         provider: { require_parameters: true },
       }),
-      signal: AbortSignal.timeout(110_000),
+      signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
@@ -249,8 +251,22 @@ export async function recognizeEvent(input: {
   };
   try {
     completion = await response.json();
-  } catch {
-    throw new AiImportError("AI_INVALID_OUTPUT", "AI 返回的结果无法读取，请重试。", 502);
+  } catch (error) {
+    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    const code = timeout ? "AI_TIMEOUT" : "AI_INVALID_OUTPUT";
+    console.warn("AI response read failed", {
+      model,
+      code,
+      upstreamStatus: response.status,
+      contentType: response.headers.get("content-type"),
+      errorName: error instanceof Error ? error.name : "unknown",
+      latencyMs: Date.now() - started,
+    });
+    throw new AiImportError(
+      code,
+      timeout ? "AI 识别超时，请重试或使用手动 JSON。" : "AI 返回的结果无法读取，请重试或使用手动 JSON。",
+      502,
+    );
   }
   const choice = completion.choices?.[0];
   if (!choice?.message?.content || choice.finish_reason === "length")

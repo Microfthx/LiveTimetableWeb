@@ -282,6 +282,24 @@ it("reports OpenRouter credit errors without changing import data", async () => 
   })).rejects.toMatchObject({ code: "AI_CREDITS_REQUIRED", message: "OpenRouter 额度不足，请检查账户余额。" });
 });
 
+it("reports a timed-out successful response body as an AI timeout", async () => {
+  const response = new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+  response.json = async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); };
+  const fakeFetch = (async () => response) as typeof fetch;
+  await expect(recognizeEvent({
+    timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
+  })).rejects.toMatchObject({ code: "AI_TIMEOUT", message: "AI 识别超时，请重试或使用手动 JSON。" });
+});
+
+it("keeps malformed successful API responses distinct from timeouts", async () => {
+  const fakeFetch = (async () => new Response("incomplete", { status: 200 })) as typeof fetch;
+  await expect(recognizeEvent({
+    timetable: null, crop: null, postText: "14:00 Gara", mode: "normal",
+    apiKey: "test-secret", normalModel: "z-ai/glm-5.3-flash", fetchImpl: fakeFetch,
+  })).rejects.toMatchObject({ code: "AI_INVALID_OUTPUT" });
+});
+
 it("distinguishes a provider restriction from an invalid OpenRouter key", async () => {
   const fakeFetch = (async () => new Response(JSON.stringify({ error: {
     code: 403,
