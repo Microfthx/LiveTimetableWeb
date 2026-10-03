@@ -10,6 +10,7 @@ const library = [
   { id: "1", name: "Token", avatarUrl: "/token.webp" },
   { id: "2", name: "Purelee", avatarUrl: "/purelee.webp" },
   { id: "3", name: "DayBreak" },
+  { id: "4", name: "夢境契約", avatarUrl: "/dream.webp" },
 ] as GroupLibraryRecord[];
 
 it("searches avatar choices without losing the selected binding and allows clearing it", () => {
@@ -27,6 +28,9 @@ it("searches avatar choices without losing the selected binding and allows clear
   expect(onChange).toHaveBeenCalledWith("1");
   expect(screen.queryByRole("searchbox")).toBeNull();
   fireEvent.click(trigger);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "梦境契约" } });
+  expect(screen.getByRole("button", { name: /夢境契約.*有头像/ })).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "未绑定 · 使用本场 crop" }));
   expect(onChange).toHaveBeenCalledWith("");
 });

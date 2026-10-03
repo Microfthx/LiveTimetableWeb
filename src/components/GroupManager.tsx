@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ImageUp, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { GroupLibraryRecord } from "../types/groupLibrary";
 import { createGroup, deleteGroup, importWeiboGroupProfile, listGroups, updateGroup, type GroupDraft } from "../utils/activitiesApi";
-import { groupNameFromWeiboHandle } from "../utils/groupMatching";
+import { groupMatchKey, groupNameFromWeiboHandle } from "../utils/groupMatching";
 
 const emptyDraft = (): GroupDraft => ({ name: "", weiboUid: "", weiboUrl: "" });
 const weiboCookie = () => { try { return localStorage.getItem("live-idol-weibo-cookie") ?? ""; } catch { return ""; } };
@@ -75,7 +75,9 @@ export function GroupManager() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "微博资料读取失败。"); }
     finally { setBusy(false); }
   };
-  const visible = groups.filter((group) => `${group.name} ${group.weiboUid ?? ""}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const searchKey = groupMatchKey(search);
+  const visible = groups.filter((group) => groupMatchKey(group.name).includes(searchKey)
+    || !!group.weiboUid?.includes(search.trim()));
   return <section className="group-manager">
     <div className="group-manager-toolbar"><h2>团体管理 <small>{groups.length}</small></h2><button className="primary-button" onClick={() => open()} disabled={busy}><Plus size={18} /> 新增团体</button></div>
     <input aria-label="搜索团体" placeholder="搜索团体名称或微博 UID" value={search} onChange={(event) => setSearch(event.target.value)} />
