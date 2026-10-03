@@ -45,7 +45,6 @@ export function AiCropDebugPanel({ debug, original, originalAtRequest, data, ima
   const inputRatio = input.width && input.height ? input.width / input.height : 0;
   const originalRatio = originalWidth && originalHeight ? originalWidth / originalHeight : 0;
   const sameRatio = inputRatio && originalRatio ? Math.abs(inputRatio - originalRatio) / originalRatio < 0.000001 : false;
-  const finalByName = new Map(data.groups.map((group) => [group.name, images[group.id]]));
 
   return <details className="ai-crop-debug">
     <summary>AI Crop Debug · 原始坐标诊断</summary>
@@ -54,8 +53,9 @@ export function AiCropDebugPanel({ debug, original, originalAtRequest, data, ima
       <span>AI INPUT：{input.width} × {input.height} · ratio {ratio(input.width, input.height)}</span>
       <span>ORIGINAL：{originalWidth} × {originalHeight} · ratio {ratio(originalWidth, originalHeight)}</span>
       <span>比例完全一致：{sameRatio ? "是" : "否 / 无法判断"}</span>
-      <span>发送前 resize：{input.resize ? "是" : "否"}；保持比例：{input.aspectRatioPreserved ? "是" : "否"}</span>
-      <span>padding：{input.padding ? "是" : "否"}；center crop：{input.centerCrop ? "是" : "否"}；CSS / object-fit 裁切作为输入：{input.objectFitOrCssCrop ? "是" : "否"}</span>
+      <span>本应用发送前 resize：{input.resize ? "是" : "否"}；保持比例：{input.aspectRatioPreserved ? "是" : "否"}</span>
+      <span>本应用发送前 padding：{input.padding ? "是" : "否"}；center crop：{input.centerCrop ? "是" : "否"}；CSS / object-fit 裁切作为输入：{input.objectFitOrCssCrop ? "是" : "否"}</span>
+      <span>OpenRouter 或模型提供方内部的图像预处理无法从本应用观察。</span>
       <span>AI INPUT MIME：{input.mime ?? "无图片"}；SHA-256：{input.sha256 ?? "无图片"}</span>
       {renderedInput && <span>浏览器解码 AI INPUT natural：{renderedInput.width} × {renderedInput.height}</span>}
       {original && originalAtRequest && (original.width !== originalAtRequest.width || original.height !== originalAtRequest.height) &&
@@ -73,7 +73,11 @@ export function AiCropDebugPanel({ debug, original, originalAtRequest, data, ima
     <div className="ai-crop-debug-results">
       {debug.groups.map((group, index) => {
         const crop = debugCrop(group.rawCrop);
-        const final = finalByName.get(group.name);
+        const finalGroup = data.groups.find((item) => item.id === group.id && item.name === group.name)
+          ?? data.groups.find((item) => item.name === group.name);
+        const final = finalGroup ? images[finalGroup.id] : undefined;
+        const matchesFinal = !!crop && !!finalGroup?.crop
+          && (['x', 'y', 'width', 'height'] as const).every((key) => crop[key] === finalGroup.crop?.[key]);
         return <div className="ai-crop-debug-result" key={`${group.id}-${index}`}>
           {final ? <img src={final} alt={`${group.name} 当前最终裁剪图片`} /> : <div className="ai-crop-debug-empty">无最终图片</div>}
           <div><strong>{group.name || `团体 ${index + 1}`}</strong>
@@ -81,6 +85,7 @@ export function AiCropDebugPanel({ debug, original, originalAtRequest, data, ima
               <small>x {crop.x} · y {crop.y} · width {crop.width} · height {crop.height}</small>
               <small>ORIGINAL pixelX {number(crop.x * originalWidth)} · pixelY {number(crop.y * originalHeight)} · pixelWidth {number(crop.width * originalWidth)} · pixelHeight {number(crop.height * originalHeight)}</small>
               <small>AI INPUT pixelX {number(crop.x * input.width)} · pixelY {number(crop.y * input.height)} · pixelWidth {number(crop.width * input.width)} · pixelHeight {number(crop.height * input.height)}</small>
+              <small>最终 Canvas 使用的 crop：{matchesFinal ? "与 rawCrop 相同" : "与 rawCrop 不同 / 无对应团体，请核对人工修改或校验结果"}</small>
             </> : <small>rawCrop：{JSON.stringify(group.rawCrop)}（无法绘制）</small>}
           </div>
         </div>;
